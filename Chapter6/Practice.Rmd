@@ -1,0 +1,17 @@
+# 6E1
+
+If we include a collider: a variable that's caused by both the predictor and the outcome
+
+If we include a variable that's unrelated but is a descendent of a collider
+
+# 6E2
+
+```{r}
+library(dagitty)
+dag_6.1 <- dagitty( "dag {
+    X -> Y
+    X -> Z -> Y
+    Z <- A -> Y
+}")
+adjustmentSets( dag_6.1 , exposure="X" , outcome="Y" )
+```

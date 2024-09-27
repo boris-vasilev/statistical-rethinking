@@ -1,0 +1,104 @@
+# 6.3 Collider bias
+
+Two factors play a role in the selection process for journal articles. They need to be trustowrthy and newsworthy. This is an example of **collider bias**.
+
+T -\> S \<- N - this is an example of a collider - that is S.
+
+When you condition on a collider it creates statistical, but not necessarily causal, associations among its causes. In this case, if we learn that a proposal has been selected (S), then learning its trustworthiness (T), also informs us about its newsworthiness (N).
+
+Why?
+
+Because if a proposal has been selected with low trustworthiness then its newsworthiness must be high because otherwise it wouldn't have been selected.
+
+This information phenomenon therefore creates a negative association between T and N in the population of *selected* proposals.
+
+**If you look at the selected proposals then low T would imply high N because otherwise it wouldn't be selected and vice versa. Also in the non-selected population high T would be associated with low N and vice versa because otherwise it would've been selected.**
+
+## 6.3.1 Collider of false sorrow
+
+How does aging influence happiness? If we survey people on how happy they are, is age associated with happiness? If so is it causal?
+
+Suppose that happiness doesn't change as we age. Age does affect events in one's life such as marriage.
+
+Happier people are more likely to get married: H-\>M
+
+Older people are more likely to get married: A-\>M
+
+So M is a collider: H-\>M\<-A
+
+Happiness and age both cause marriage. So even if there is no causal association between age and happiness if we condition on M we will induce a statistical association. This can lead us to think that age influences happiness, when in fact it's constant.
+
+```{r}
+library(rethinking)
+d <- sim_happiness(seed=1977, N_years = 1000)
+precis(d)
+```
+
+Suppose you come across this data and want to find out whether age is related to happiness. You reason that marriage might be a confound because on average married people are more happy. So you include marriage status into the model to condition on it.
+
+The linear model for this is
+
+$\mu_i = \alpha_{MID[i]} + \beta_A A_i$
+
+where $MID[i]$ is an index for the marriage status of individual i with 1 being single and 2 being married. It is a categorical variable coded with an index variable. It's easier to make priors when we use multiple intercepts, one for each category, than when we use indicator variables (0 and 1).
+
+Now the priors:
+
+Let's imagine that age and happiness have a very strong association and a person is happiest at 18 and declines until 65 when it's lowest. We rescale age so that 18 to 65 is one unit
+
+```{r}
+d2 <- d[d$age > 17,]
+d2$A <- (d2$age - 18) / (65-18)
+```
+
+```{r}
+library(patchwork)
+library(tidyverse)
+
+(d2 %>% ggplot(aes(x=d2$age)) + geom_density() + theme_classic()) + (d2 %>% ggplot(aes(x=d2$A)) + geom_density() + theme_classic())
+```
+
+Now A is the new variable. 0 means 18 years and 1 is 65 years.
+
+Happiness is on a scale from -2 to +2.
+
+```{r}
+dens(d2$happiness)
+```
+
+```{r}
+d2$mid <- d2$married + 1
+m6.9 <- quap(
+    alist(
+        happiness ~ dnorm( mu , sigma ),
+        mu <- a[mid] + bA*A,
+        a[mid] ~ dnorm( 0 , 1 ),
+        bA ~ dnorm( 0 , 2 ),
+        sigma ~ dexp(1)
+    ) , data=d2 )
+precis(m6.9,depth=2)
+```
+
+Our model conditioning on marriage status shows that age is negatively associated with happiness.
+
+If we now exclude marriage status.
+
+```{r}
+m6.10 <- quap(
+    alist(
+        happiness ~ dnorm( mu , sigma ),
+        mu <- a + bA*A,
+        a ~ dnorm(0, 1),
+        bA ~ dnorm( 0 , 2 ),
+        sigma ~ dexp(1)
+    ) , data=d2 )
+precis(m6.10,depth=2)
+```
+
+The model not conditioning on marriage status shows no association between age and happiness. This pattern is what we'd expect when we condition on a collider.
+
+The collider is marriage status. It is a common consequence of age and happiness. Thus when we condition on it we induce a spurious association between the two causes.
+
+## 6.3.2 The haunted DAG
+
+Collider bias arises when conditioning on a common consequence. But sometimes it's hard to find a collider because there may be unmeasured causes. And that's something we should consider.

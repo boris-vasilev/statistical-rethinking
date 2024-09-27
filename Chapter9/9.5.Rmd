@@ -1,0 +1,379 @@
+# 9.5 Care and feeding of your Markov chain
+
+The good thing about HMC compared to Gibbs and Metropolis is not only that it is faster and works for complex posteriors but most importantly - when things go wrong it complains loudly.
+
+Let's establish some guidelines for running chains:
+
+## 9.5.1 How many samples do you need?
+
+This can be control with the [*iter*]{.underline}and [*warmup*]{.underline}parameters.
+
+By default iter = 1000 and warmup = iter/2 - so 500 warmup samples and 500 real samples
+
+So how many samples do we need? It depends.
+
+[**iter**]{.underline}
+
+First, what really matters is the *effective* number of samples, not the raw number. This is the number of samples that are not autocorrelated. Some samples can be anti-correlated. That increases the effective number of samples ess_bulk. So we usually end up having ess_bulk which is larger than the number of raw samples.
+
+Second, it depends on the goal. If we only want to know the mean of the distribution we don't need that many samples - even a couple hundred would do. But if we want to know the shape of the distribution (e.g. for posterior predictive checks) we need a lot more.
+
+In most typical regression applications, getting the mean requires as few as 200 samples.
+
+If the posterior is Gaussian, all we need is to estimate the variance, which can be had with one order of magnitude more.
+
+For skewed distributions we need to think about which part of the distribution we're interested in. Stan will sometimes warn about "tail ESS". the effective sample size in the tails of the posterior. In those cases, the concern is about the quality of extreme intervals, like 95%. Sampling more usually helps.
+
+[**warmup**]{.underline}
+
+The warmup samples are more subtle. We want as less as possible samples to be in warmup because they're not used in inference. But having a larger warmup phase might help with more efficient sampling.
+
+If there are troubles with exploring the posterior in the sampling phase, increase it. If not, decrease it to get more samples.
+
+## 9.5.2 How many chains do you need?
+
+The number of independent Markov chains is controlled by the *chains* parameter and the *cores* parameters distributes it on different CPUs. All non-warmup samples are combined in the resulting inferences.
+
+So how many chains?
+
+-   When first **debugging** use only **one\
+    **Some error messages don't display unless only one chain is used.
+
+-   When **deciding if the chains are valid**, we need **more than one**
+
+-   When doing the **final run for inferences**, just **one**
+
+The first time you sample from a chain, you're not sure whether it's working right. So we check the **trace and trank plots**. Having **more than one chain** helps to make sure the Markov chains are converging to the same distribution. Sometimes individual chains look like they've settled to a stable distribution, but if you run it again it settles in a different distribution. Having multiple chains, each with different starting position, that **converge** **to the same region of parameter space**, is a good check. Using **3-4 chains** is often enough.
+
+It's reasonable to use:\
+[***One short chain to debug, four chins for verification and inference.***]{.underline}
+
+**Convergence diagnostics**
+
+The default output of Stan reports *ess_bulk* and *Rhat*. The first is the effective sample size, the second is the Gelman-Rubin convergence diagnostic.
+
+When ess_bulk is much lower than the actual iterations minus warmup, it means the chains are inefficient, but possibly still okay.
+
+When Rhat is above 1.00, it usually means that the chain has not converged yet, and we shouldn't trust the samples. If we draw more samples, it could be fine or it might never converge. Sometimes Rhat can be 1 but still have an invalid chain. Treat it as a sign of danger, but never of safety.
+
+## 9.5.3 Taming a wild chain
+
+One common problem is that there might be large flat regions of the posterior. It's more common when using flat priors.
+
+Let's look at a simple example. Try to estimate the mean and std of two Gaussian observations -1 and 1. Using flat priors.
+
+```{r}
+y <- c(-1, 1)
+set.seed(11)
+m9.2 <- ulam(
+  alist(
+    y ~ dnorm(mu, sigma),
+    mu <- alpha,
+    alpha ~ dnorm(0, 1000),
+    sigma ~ dexp(0.0001)
+  ),
+data=list(y=y), chains=3)
+```
+
+```{r}
+precis(m9.2)
+```
+
+Mean of 8 with std of 634. This can't be right.
+
+The ess_bulk and rhat don't look good either. We drew 500 actual samples from 3 chains, 1500 samples total. We ended up having 183 effective samples for the mean and 22 for the std.
+
+Rhat is above 1.00.
+
+There are also several warning messages
+
+```         
+Warning: 36 of 1500 (2.0%) transitions ended with a divergence.
+See https://mc-stan.org/misc/warnings for details.
+```
+
+These are **divergent transitions**. More info in later chapters. It's Stan's way of saying that there are problems with the chains.
+
+For simpler models, increasing the *adapt_delta* control parameter will usually remove the divergent transitions. Default is 0.95.
+
+```{r}
+m9.2a <- ulam(
+  alist(
+    y ~ dnorm(mu, sigma),
+    mu <- alpha,
+    alpha ~ dnorm(0, 1000),
+    sigma ~ dexp(0.0001)
+  ),
+  data=list(y=y),
+  chains=3,
+  control=list(adapt_delta=0.99)
+)
+```
+
+```{r}
+precis(m9.2a)
+```
+
+```{r}
+traceplot(m9.2)
+```
+
+```{r}
+traceplot(m9.2, chains=1)
+```
+
+The Markov chains seem to be drifting around and spiking occasionally to extreme values. Never reaching a stable state.
+
+```{r}
+trankplot(m9.2)
+```
+
+**For healthy well-mixing chains, the histrograms should be uniform. When there are spikes for some chains, especially in the low or high ranks, this suggests problems in exploring the posterior.**
+
+We're seeing spikes here. The sigma estimation has spikes in the lower ranks, alpha in the middle ranks.
+
+In the trank plots, there are periods where the histogram of one chain spends long periods above or below the others. This indicates poor exploration of the posterior.
+
+The reason for this is that we used very little data (2 observations) and uniformative priors.
+
+Let's use more informative priors.
+
+```{r}
+m9.3 <- ulam(
+  alist(
+    y ~ dnorm(mu, sigma),
+    mu <- alpha,
+    alpha ~ dnorm(0, 10),
+    sigma ~ dexp(1)
+  ),
+  data=list(y=y),
+  chains=3
+)
+precis(m9.3)
+```
+
+That's much closer to the actual values.
+
+```{r}
+traceplot(m9.3)
+```
+
+The trace plots look metter. Note the change in the scale of the y-axis compared to the previous that was going to values as extreme as 1000s. Here it's in a much better range.
+
+```{r}
+trankplot(m9.3)
+```
+
+## 9.5.4 Non-identifiable parameters
+
+In chapter 6, we saw the problem with highly correlated predictors, and the non-identifiable parameters they can create.
+
+Let's see what they look like in a Markov chain. We'll also see how we can identify them, in principle, with a little prior information.
+
+*The behaviour seen here is characteristic for highly correlated predictors and is a good sign to look out for.*
+
+First we simulate 100 observations from a Gaussian distribution with mean 0 and std 1.
+
+```{r}
+set.seed(41)
+y <- rnorm(100, mean = 0, sd = 1)
+```
+
+Then we fit this model
+
+$$
+y_i \sim Normal(\mu, \sigma) \\
+\mu = \alpha_1 + \alpha_2 \\
+\alpha_1 \sim Normal(0, 1000) \\
+\alpha_2 \sim Normal(0, 1000) \\
+\sigma \sim Exponential(1)
+$$
+
+The linear model contains $\alpha_1$ and $\alpha_2$ which cannot be identified. Only their sum can be identified and it should be about zero, after estimation.
+
+```{r}
+m9.4 <- ulam(
+    alist(
+        y ~ dnorm( mu , sigma ) ,
+        mu <- a1 + a2 ,
+        a1 ~ dnorm( 0 , 1000 ),
+        a2 ~ dnorm( 0 , 1000 ),
+        sigma ~ dexp( 1 )
+    ) , data=list(y=y) , chains=3, cores = 3)
+precis( m9.4 )
+```
+
+These estimates look suspicios and rhat and ess_bulk are horrible. The means for a1 and a2 are about the same distance from zero but on opposite ends and with massive stds.
+
+We also get this warning:
+
+```         
+Warning: 1167 of 1500 (78.0%) transitions hit the maximum treedepth limit of 10.
+See https://mc-stan.org/misc/warnings for details.
+```
+
+```{r}
+traceplot(m9.4)
+```
+
+Those chains don't look stationary and they don't mix well.
+
+```{r}
+trankplot(m9.4)
+```
+
+Weakly regularizing priors can rescue us here again.
+
+```{r}
+m9.5 <- ulam(
+    alist(
+        y ~ dnorm( mu , sigma ) ,
+        mu <- a1 + a2 ,
+        a1 ~ dnorm( 0 , 10 ),
+        a2 ~ dnorm( 0 , 10 ),
+        sigma ~ dexp( 1 )
+    ) , data=list(y=y) , chains=3, cores = 3)
+precis( m9.5 )
+```
+
+```{r}
+traceplot(m9.5)
+```
+
+Now they're mixing well.
+
+```{r}
+trankplot(m9.5)
+```
+
+This model was also a lot faster. Often a model that is too slow to sample has unidentifiable parameters.
+
+```{r}
+data("WaffleDivorce")
+d <- WaffleDivorce
+
+d$D <- standardize(d$Divorce)
+d$M <- standardize(d$Marriage)
+d$A <- standardize(d$MedianAgeMarriage)
+
+m5.1 <- ulam(
+  alist(
+    D ~ dnorm(mu, sigma),
+    mu <- a + bA * A,
+    a ~ dnorm(0, 0.2),
+    bA ~ dnorm(0, 0.5),
+    sigma ~ dexp(1)
+  ),
+  data = d[, c("D", "A")],
+  log_lik = T
+)
+
+m5.2 <- ulam(
+  alist(
+    D ~ dnorm(mu, sigma),
+    mu <- a + bM * M,
+    a ~ dnorm(0, 0.2),
+    bM ~ dnorm(0, 0.5),
+    sigma ~ dexp(1)
+  ),
+  data = d[, c("D", "M")],
+  log_lik = T
+)
+
+m5.3 <- ulam(
+  alist(
+    D ~ dnorm(mu, sigma),
+    mu <- a + bM*M + bA*A,
+    a ~ dnorm(0, 0.2),
+    bM ~ dnorm(0, 0.5),
+    bA ~ dnorm(0, 0.5),
+    sigma ~ dexp(1)
+  ),
+data = d[, c("D", "M", "A")],
+log_lik = T)
+```
+
+```{r}
+compare(m5.1, m5.2, m5.3)
+```
+
+```{r}
+compare(m5.1, m5.2, m5.3, func = PSIS)
+```
+
+The Age-only model is ranked best by both WAIC and PSIS but the weight is split between the A and A+M model.
+
+# 9H3
+
+```{r}
+N <- 100                          # number of individuals
+set.seed(909)
+height <- rnorm(N,10,2)           # sim total height of each
+leg_prop <- runif(N,0.4,0.5)      # leg as proportion of height
+leg_left <- leg_prop*height +     # sim left leg as proportion + error
+    rnorm( N , 0 , 0.02 )
+leg_right <- leg_prop*height +    # sim right leg as proportion + error
+    rnorm( N , 0 , 0.02 )
+                                  # combine into data frame
+d <- data.frame(height,leg_left,leg_right)
+```
+
+```{r}
+m6.1a <- ulam(
+    alist(
+        height ~ dnorm( mu , sigma ) ,
+        mu <- a + bl*leg_left + br*leg_right ,
+        a ~ dnorm( 10 , 100 ) ,
+        bl ~ dnorm( 2 , 10 ) ,
+        br ~ dnorm( 2 , 10 ) ,
+        sigma ~ dexp( 1 )
+    ) , data=d, chains=4, cores=4,
+    start = list(a=10, bl=0, br=0.1, sigma=1),
+    log_lik = T)
+```
+
+```{r}
+m6.1b <- ulam(
+    alist(
+        height ~ dnorm( mu , sigma ) ,
+        mu <- a + bl*leg_left + br*leg_right ,
+        a ~ dnorm( 10 , 100 ) ,
+        bl ~ dnorm( 2 , 10 ) ,
+        br ~ dnorm( 2 , 10 ) ,
+        sigma ~ dexp( 1 )
+    ) , data=d, chains=4, cores=4,
+    constraints=list(br="lower=0"),
+    start = list(a=10, bl=0, br=0.1, sigma=1),
+    log_lik = T)
+```
+
+```{r}
+m6.1a.post <- extract.samples(m6.1a)
+m6.1b.post <- extract.samples(m6.1b)
+
+dens(m6.1a.post$br, col="red", ylim=c(0, 0.25))
+dens(m6.1b.post$br, col="blue", add=T)
+mtext("br posterior")
+```
+
+The br posterior in the second model as expected is strictly positive.
+
+I'd expect the bl posterior to be shifted left to mostly negative values to compensate for the change in br. Since the two are highly correlated and both are included in the linear model for height. So the bl parameter needs to adjust to compensate for the strictly positive values of br.
+
+```{r}
+dens(m6.1a.post$bl, col="red", ylim=c(0, 0.25))
+dens(m6.1b.post$bl, col="blue", add=T)
+mtext("bl posterior")
+```
+
+# 9H4
+
+```{r}
+compare(m6.1a, m6.1b)
+```
+
+```{r}
+compare(m6.1a, m6.1b, func=PSIS)
+```
+
+The model with no constraint has more effective parameters. The reason why the model with constraints has less effective parameters is because we've imposed a restriction on the search space of the Markov chain. What we've done by setting the constraint on br is similar to what we'd do by setting a more informative prior.

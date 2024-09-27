@@ -1,0 +1,155 @@
+# 5M4
+
+```{r}
+library(rethinking)
+data("WaffleDivorce")
+d <- WaffleDivorce
+```
+
+```{r}
+d$M <- standardize(d$Marriage)
+d$A <- standardize(d$MedianAgeMarriage)
+d$D <- standardize(d$Divorce)
+d$pct_LDS <- c(0.75, 4.53, 6.18, 1, 2.01, 2.82, 0.43, 0.55, 0.38,
+0.75, 0.82, 5.18, 26.35, 0.44, 0.66, 0.87, 1.25, 0.77, 0.64, 0.81,
+0.72, 0.39, 0.44, 0.58, 0.72, 1.14, 4.78, 1.29, 0.61, 0.37, 3.34,
+0.41, 0.82, 1.48, 0.52, 1.2, 3.85, 0.4, 0.37, 0.83, 1.27, 0.75,
+1.21, 67.97, 0.74, 1.13, 3.99, 0.92, 0.44, 11.5 )
+d$L <- standardize(d$pct_LDS)
+```
+
+```{r}
+m5M4 <- quap(
+  alist(
+    D ~ dnorm(mu, sigma),
+    mu <- a + bM * M + bA * A + bL * L,
+    a ~ dnorm(0, 0.2),
+    bM ~ dnorm(0, 0.5),
+    bA ~ dnorm(0, 0.5),
+    bL ~ dnorm(0, 0.5),
+    sigma ~ dexp(1)
+  ), data = d)
+```
+
+```{r}
+precis(m5M4)
+```
+
+```{r}
+m5M4_LDS <- quap(
+  alist(
+    L ~ dnorm(mu, sigma),
+    mu <- a + bA * A,
+    a ~ dnorm(0, 0.2),
+    bA ~ dnorm(0, 0.5),
+    sigma ~ dexp(1)
+  ), data = d)
+```
+
+```{r}
+precis(m5M4_LDS)
+```
+
+# 5H2
+
+```{r}
+
+m5H2 <- quap(
+  alist(
+    ## M -> A -> D
+    D ~ dnorm(mu, sigma),
+    mu <- a + bA * A,
+    a ~ dnorm(0, 0.2),
+    bA ~ dnorm(0, 0.5),
+    sigma ~ dexp(1),
+    ## M -> A
+    A ~ dnorm(mu_A, sigma_A),
+    mu_A <- aA + bMA * M,
+    aA ~ dnorm(0, 0.2),
+    bMA ~ dnorm(0, 0.5),
+    sigma_A ~ dexp(1)
+  ), data=d)
+```
+
+## Correction
+
+**The model is M -> A -> D. There is no direct edge from M -> D. No direct effect from M to D. M acts only through mediation via A. Therefore in our linear model for D we shouldn't include M as a predictor. Only A. M is a predictor for A and that is included in the model for mu_A**
+
+Let's find reasonable values for marriage rate to half. First we plot the density plot of marriage rate (raw) 30% and 15% seem like reasonable values. Not crazy impossible rates.
+
+```{r}
+dens(d$Marriage)
+```
+
+We then need to calculate the standardized marriage rate that corresponds to 30 and 15%
+
+```{r}
+sim_data <- data.frame(
+  M = (c(15, 30) - mean(d$Marriage)) / sd(d$Marriage)
+  # manipulating M
+  #A = 0  # fixing A
+)
+```
+
+```{r}
+s <- sim(m5H2, data = sim_data, vars=c("A", "D"))
+```
+
+```{r}
+mean(s$D[, 2] - s$D[, 1])
+```
+
+The effect is a change of 1.52 standard deviations of D. A huge change from reducing marriage rate from 30 to 15%.
+
+# 5H3
+
+```{r}
+data("milk")
+d <- milk
+d$K <- standardize(d$kcal.per.g)
+d$N <- standardize(d$neocortex.perc)
+d$M <- standardize(log(d$mass))
+
+d <- d[complete.cases(d$K, d$M, d$N), ]
+```
+
+```{r}
+m5H3 <- quap(
+  alist(
+    K ~ dnorm(mu, sigma),
+    mu <- a + bM * M + bN * N,
+    a ~ dnorm(0, 0.2),
+    bM ~ dnorm(0, 0.5),
+    bN ~ dnorm(0, 0.5),
+    sigma ~ dexp(1),
+    N ~ dnorm(mu_N, sigma_N),
+    mu_N <- aN + bMN * M, 
+    aN ~ dnorm(0, 0.2),
+    bMN ~ dnorm(0, 0.5),
+    sigma_N ~ dexp(1)
+  ), data=d)
+```
+
+```{r}
+dens(d$mass)
+```
+We pick 30 and 15kg
+
+```{r}
+sim_data <- data.frame(M=(c(15, 30)-mean(d$mass))/sd(d$mass))
+```
+
+```{r}
+s <- sim(m5H3, data=sim_data, vars=c("N", "K"))
+```
+
+```{r}
+diff_std <- mean(s$K[, 2] - s$K[, 1])
+```
+
+```{r}
+diff_std * sd(d$mass) + mean(d$mass)
+```
+
+A change of 11.7 kcal/g.
+

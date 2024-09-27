@@ -1,0 +1,129 @@
+# 4.3 Gaussian model of height
+
+Load data and select adults only
+
+```{r}
+library(rethinking)
+data("Howell1")
+d <- Howell1
+d2 <- d[d$age >= 18, ]
+```
+
+```{r}
+precis(d)
+```
+
+Density plot of the height looks almost normally distributed.
+
+So for the prior for height we will use $h_i \sim Normal(\mu, \sigma)$
+
+```{r}
+dens(d2$height)
+```
+
+Plot prior for the $\mu \sim Normal(178, 20)$
+
+```{r}
+curve(dnorm(x, 178, 20), from=100, to=250)
+```
+
+Plot prior for the $\sigma \sim Uniform(0, 50)$
+
+```{r}
+curve(dunif(x, 0, 50), from=-10, to=60)
+```
+
+Why Uniform(0, 50) - A sigma of 0-50 would mean that the std deviation is positive and limited to 50. I.e. for a normally distributed height that 95% (2\*std) of the heights is within 100cm of the avg height
+
+## Prior predictive simulation
+
+Given the chosen priors and no data provided, what does our model tell us about height
+
+Just like **posterior predictive simulation**, generate samples but using the priors instead of the posterior distribution.
+
+This helps to diagnose bad choices for priors.
+
+```{r}
+sample_mu <- rnorm(1e4, 178, 20) # 10,000 samples
+sample_sigma <- runif(1e4, 0, 50) # 10,000 samples
+prior_h <- rnorm(1e4, sample_mu, sample_sigma) # 10,000 samples each from the corresponding sample for mu and sigma
+dens(prior_h)
+```
+
+We can see that quite a bit of the samples fall \> 200cm which is not what we observe in real life
+
+```{r}
+mean(prior_h > 200)
+```
+
+23% of the samples are higher than 200cm with this choice of priors.
+
+## 4.3.3 Grid approximation of the posterior
+
+```{r}
+mu.list <- seq( from=150, to=160 , length.out=100 )
+sigma.list <- seq( from=7 , to=9 , length.out=100 )
+post <- expand.grid( mu=mu.list , sigma=sigma.list )
+post$LL <- sapply( 1:nrow(post) , function(i) sum(
+    dnorm( d2$height , post$mu[i] , post$sigma[i] , log=TRUE ) ) )
+post$prod <- post$LL + dnorm( post$mu , 178 , 20 , TRUE ) +
+    dunif( post$sigma , 0 , 50 , TRUE )
+post$prob <- exp( post$prod - max(post$prod) )
+```
+
+```{r}
+contour_xyz( post$mu , post$sigma , post$prob )
+```
+
+```{r}
+image_xyz( post$mu , post$sigma , post$prob )
+```
+
+## 4.3.4 Sampling from the posterior
+
+```{r}
+sample.rows <- sample( 1:nrow(post) , size=1e4 , replace=TRUE ,
+    prob=post$prob )
+sample.mu <- post$mu[ sample.rows ]
+sample.sigma <- post$sigma[ sample.rows ]
+```
+
+```{r}
+plot( sample.mu , sample.sigma , cex=0.5 , pch=16 , col=col.alpha(rangi2,0.1) )
+```
+
+```{r}
+hist(sample.mu)
+```
+
+```{r}
+hist(sample.sigma)
+```
+
+```{r}
+PI(sample.mu)
+```
+
+```{r}
+PI(sample.sigma)
+```
+
+## 4.3.5 Finding the posterior with quadratic approximation
+
+```{r}
+flist <- alist(
+  height ~ dnorm(mu, sigma),
+  mu ~ dnorm(178, 20),
+  sigma ~ dunif(0, 50)
+)
+```
+
+```{r}
+m4.1 <- quap(flist, data=d2)
+```
+
+```{r}
+precis(m4.1)
+```
+
+This gives the ***marginal distribution*** of each of the parameters (mu, sigma). Marignal distribution means the distribution of the parameter averaging over the other parameters. Remember that with more than one parameter, the parameter space becomes multi-dimensional so to get an idea of the shape of the distribution for a specific parameter, we average over the other parameters.

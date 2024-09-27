@@ -1,0 +1,566 @@
+---
+editor_options: 
+  markdown: 
+    wrap: 72
+---
+
+# 5.1. Spurious association
+
+Load data
+
+```{r}
+library(rethinking)
+data("WaffleDivorce")
+d <- WaffleDivorce
+d
+```
+
+Standardize variables
+
+```{r}
+d$D <- standardize(d$Divorce)
+d$M <- standardize(d$Marriage)
+d$A <- standardize(d$MedianAgeMarriage)
+```
+
+Simple linear regression model (Age at marriage influences divorce rate)
+
+$D_i \sim Normal(\mu_i, \sigma)$
+
+$\mu_i = \alpha + \beta_AA_i$
+
+$\alpha \sim Normal(0, 0.2)$
+
+$\beta_A \sim Normal(0, 0.5)$
+
+$\sigma \sim Exponential(1)$
+
+$D_i$ is the standardized divorce rate (zero-centered, std=1). $A_i$ is
+the standardized median age at mariage.
+
+**Why do we have those priors?** - Since the outcome $D_i$ and the
+predictor $A_i$ are **both standardized, therefore on the same scale**,
+we choose the prior for $\alpha$ - the intercept to be close to 0. **Why
+the prior of** $\beta_A$? - If $\beta_A = 1$, that would imply that a
+change of one standard deviation in age at marriage is associated with a
+one standard deviation change in divorce rate. To know whether or not
+that is a strong relationship, we need to know how big the std of age at
+marriage is
+
+```{r}
+sd(d$MedianAgeMarriage)
+```
+
+So when $\beta_A = 1$ a change of 1.2 years in median age at marriage is
+associated with a full std chnage in the outcome variable - divorce
+rate.
+
+```{r}
+m5.1 <- quap(
+  alist(
+    D ~ dnorm(mu, sigma),
+    mu <- a + bA * A,
+    a ~ dnorm(0, 0.2),
+    bA ~ dnorm(0, 0.5),
+    sigma ~ dexp(1)
+  ),
+  data = d
+)
+```
+
+To simulate from the priors we use *extract.prior* and *link*.
+
+*link* computes sampled values of the linear model (in this case that is
+mu). extract.prior samples the prior distributions of each parameter
+1000 times by default. link then takes those prior samples and applies
+them for the provided data
+
+**Prior predictive distribution**
+
+```{r}
+prior <- extract.prior(m5.1)
+mu <- link(m5.1, post=prior, data=list(A=c(-2, 2)))
+plot(NULL, xlim=c(-2, 2), ylim=c(-2, 2))
+for(i in 1:50) lines(c(-2, 2), mu[i,], col=col.alpha("black", 0.4))
+```
+
+**Posterior predictions**
+
+```{r}
+A_seq <- seq(from = -3, to = 3.2, length.out = 30)
+mu <- link(m5.1, data=list(A=A_seq))  # Compute the linear model for different values of A
+mu.mean <- apply(mu, 2, mean)
+mu.PI <- apply(mu, 2, PI)
+```
+
+```{r}
+plot(D~A, data=d, col=rangi2)
+lines(A_seq, mu.mean, lwd=2)
+shade(mu.PI, A_seq)
+```
+
+```{r}
+m5.2 <- quap(
+  alist(
+    D ~ dnorm(mu, sigma),
+    mu <- a + bM * M,
+    a ~ dnorm(0, 0.2),
+    bM ~ dnorm(0, 0.5),
+    sigma ~ dexp(1)
+  ),
+  data = d
+)
+
+M_seq <- seq(from = -3, to = 3.2, length.out = 30)
+
+mu <- link(m5.2, data=list(M=M_seq))  # Compute the linear model for different values of A
+mu.mean <- apply(mu, 2, mean)
+mu.PI <- apply(mu, 2, PI)
+
+plot(D~M, data=d, col=rangi2)
+lines(M_seq, mu.mean, lwd=2)
+shade(mu.PI, A_seq)
+```
+
+If we compare the $\beta_A$ to $\beta_M$ we can see the strength of the
+relationship between M, A, and D.
+
+```{r}
+precis(m5.1)["bA",]
+```
+
+```{r}
+precis(m5.2)["bM",]
+```
+
+## 5.1.1 Think before you regress
+
+We can see that the relationship between A and D is stronger (because
+$|\beta_A| > |\beta_M|$). However comparing the parameter means of two
+bivariate linear regressions tells us nothing about the causal
+relationships between A,M and D.
+
+```{r}
+library(dagitty)
+```
+
+Model 5.1 that regresses D on A, tells us that the total influence of A
+is strongly negative with D. This can come through two different paths
+though - **A-\>D** or **A-\>M-\>D** (through **mediation**).
+
+```{r}
+dag5.1 <- dagitty("dag{A->D; A->M; M->D}")
+coordinates(dag5.1) <- list(x=c(A=0, D=1, M=2), y=c(A=0, D=1, M=0))
+drawdag(dag5.1)
+```
+
+How do we know if the total effect is actually through the indirect
+path, through mediation, A-\>M-\>D?\
+From model 5.2 we know that M is positively associated with D. But
+that's not enough to tell us that M-\>D is positive. It could be that
+the association between M and D arises from A's common influence on both
+M and D. Like this:
+
+```{r}
+dag5.2 <- dagitty("dag{A->D; A->M}")
+coordinates(dag5.2) <- list(x=c(A=0, D=1, M=2), y=c(A=0, D=1, M=0))
+drawdag(dag5.2)
+```
+
+This DAG is also consistent with the posterior distributions of models
+m5.1 and m5.2. Since A influences both M and D, by regressing D on M we
+capture this common influence of A on both M and D - spurious
+correlation.
+
+**We want to know causal relationships because that predicts the
+consequences of intervention.**
+
+## 5.1.2 Testable implications
+
+How do we know which model is true?
+
+```{r}
+plot(dag5.1)
+```
+
+```{r}
+plot(dag5.2)
+```
+
+***What are the testable implications of each model?***
+
+Any DAG may imply that some variables are independent of others under
+certain conditions. These are the testable implications, the
+**conditional independencies**.
+
+First, they are statements of which variables are associated with each
+other (or not) in the data. Second, they say which variables become
+dis-associated when we *condition* on some other variables.
+
+**DAG 5.1**
+
+For DAG 5.1, every variable is associated with the others because there
+is a causal arrow between each pair. These arrows create correlations.
+**Before we condition on anything, everything is associated with
+everything else. This is a testable implication.**
+
+$D \not\perp A \\ D \not\perp M \\ A\not\perp M$
+
+That $\not\perp$ means "not independent of". Checking the correlations
+between M, A, and, D tests for this implication. And from the plot below
+we can see that it is true.
+
+```{r}
+library(GGally)
+library(ggplot2)
+ggpairs(d[, c("D", "M", "A")])
+```
+
+There are no other testable implications for the first DAG.
+
+In the second DAG the three variables are still associated. That is
+because A influences both M and D so they are associated with A, and
+because they share a common influence, M and D are also associated.
+
+Suppose we condition on A. All the information in M that is relevant to
+predicting D is in A. So once we condition on A, M tells us nothing more
+about D. So in the second DAG another testable implication is that D is
+independent of M, conditional on A. - $D \perp M|A$.
+
+That is different from the first DAG. Conditioning on A in does not make
+D independent of M because M influences D all by itself.
+
+```{r}
+DMA_dag2 <- dagitty('dag{D <- A -> M}')
+impliedConditionalIndependencies(DMA_dag2)  # D _||_ M | A
+```
+
+```{r}
+DMA_dag1 <- dagitty('dag{D <- A -> M -> D}')
+impliedConditionalIndependencies(DMA_dag1)  # no conditional independencies
+```
+
+The testable implications of the first DAG are that all pairs of
+variables should be associated, whatever we condition on. The testable
+implications of the second DAG are that all pairs of variables should be
+associated before conditioning on anything, but that D and M should be
+independent after conditioning on A. So, the only implication that
+differs between these DAGs is the last one:
+$D \perp\!\!\!\perp M \mid A$.
+
+To test this implication that distinguishes the two models, we need a
+statistical model that conditions on A, so we can see whether that
+renders D independent of M. That is what **multiple regression** helps
+with.
+
+It can answer the following [*descriptive*]{.underline} question:
+
+*Is there any additional value in knowing a variable once I already know
+all of the other predictor variables?*
+
+## 5.1.3 Multiple regression notation
+
+$D_i \sim Normal(\mu_i, \sigma) \\
+\mu_i = \alpha + \beta_MM_i + \beta_AA_i \\
+\alpha \sim Normal(0, 0.2) \\
+\beta_M \sim Normal(0, 0.5) \\
+\beta_A \sim Normal(0, 0.5) \\
+\sigma \sim Exponential(1)$
+
+Interpretation of $\mu_i = \alpha + \beta_MM_i + \beta_AA_i$ : The
+expected outcome for each State $i$ is the sum of three independent
+terms - the intercept, the marriage rate, and the age at marriage.
+
+## 5.1.4 Approximating the posterior
+
+```{r}
+m5.3 <- quap(
+  alist(
+    D ~ dnorm(mu, sigma),
+    mu <- a + bM*M + bA*A,
+    a ~ dnorm(0, 0.2),
+    bM ~ dnorm(0, 0.5),
+    bA ~ dnorm(0, 0.5),
+    sigma ~ dexp(1)
+  ),
+data = d)
+```
+
+```{r}
+precis(m5.3)
+```
+
+The posterior mean for marriage rate, bM, is now close to zero, with
+plenty of probability on both sides of zero. The posterior mean for age
+at marriage, bA, is essentially unchanged from m5.1
+
+```{r}
+precis(m5.1)
+```
+
+```{r}
+precis(m5.2)
+```
+
+```{r}
+plot(coeftab(m5.1, m5.2, m5.3), par=c("bA", "bM"))
+```
+
+We can see that the bM parameter from the model that regresses D on M,
+becomes close to 0 and the 89% compatibility interval overlaps 0. In
+comparison, bA doesn't move only it becomes a bit more uncertain.
+
+bM is associated with divorce only when age at marriage is missing from
+the model.
+
+The interpretation is:
+
+*Once we know median age at marriage for a State, there is little or no
+additional predictive power in also knowing the rate of marriage in each
+State.*
+
+**Since the first DAG didn't imply this result that** $D\perp M|A$ **it
+is out and the second one is the correct one.**
+
+M is still predictive due to its correlation with D, but not causal.
+
+## 5.1.5 Plotting multivariate posteriors
+
+With bivariate regressions, it's easy to visualise the posterior. A
+scatter plot of predictor and outcome, overlaid with the regression line
+and intervals, to (1) visialise the size of the association between
+predictor and outcome, and (2) to get a crude idea of the ability of the
+model to predict individual observations.
+
+*(1) Predictor residual plots* - show outcome vs *residual* predictor
+values. Useful to understand the statistical model. Not much else
+
+*(2) Posterior prediction plots* - show model-based predictions against
+raw data, displays error in prediction. Not causal tools.
+
+*(3) Counterfactual plots* - Implied predictions for imaginary
+experiments. Display the causal implications of manipulating one or more
+variables
+
+### 5.1.5.1 Predictor residual plots
+
+A predictor residual is the average prediction error when we use all
+other predictors to model a predictor of interest. For example, the
+residual for marriage rate is the average prediction error using age at
+marriage as a predictor.
+
+The residual plot shows us the outcome (divorce rate) vs those
+residuals.
+
+By plotting outcome vs residual we're already conditioning on the other
+perdictors.
+
+For computing the residuals for marriage rate we use this:
+
+$M_i \sim Normal(\mu_i, \sigma) \\
+\mu_i = \alpha + \beta A_i \\
+\alpha \sim Normal(0, 0.2) \\
+\beta \sim Normal(0, 0.5) \\
+\sigma \sim Exponential(1)$
+
+```{r}
+m5.4 <- quap(
+  alist(
+    M ~ dnorm(mu, sigma),
+    mu <- a + bAM * A,
+    a ~ dnorm(0, 0.2),
+    bAM ~ dnorm(0, 0.5),
+    sigma ~ dexp(1)
+  ),
+data = d)
+```
+
+We compute the **residuals** by subtracting the observed marriage rate
+from the predicted marriage rate, based upon the model above.
+
+```{r}
+mu <- link(m5.4)
+mu_mean <- apply(mu, 2, mean)
+mu_resid <- d$M - mu_mean
+```
+
+When a residual is positive it means that the observed rate was higher
+then what the model predicted for that age at marriage. When it is
+negative, the observed is lower than the predicted. States with positive
+residuals have high marriage rates for their median age of marriage.
+States with negative residuals have low rates for their age of marriage.
+
+**My interpretation:** The residuals show the remaining variation of the
+predictor after using all others to predictor variables. This is what is
+truly 'unique' about this predictor, what cannot be attributed to
+associations with the other predictors. The 'independent' component of
+this predictor, what cannot be explained by anything else. If we plot
+that against the outcome we get what the independent variation of this
+predictor tells us about the outcome. If the outcome depends on the
+predictor,conditioning on every other predictor and we still see some
+association, that means that the variation in that predictor contributes
+to our predictions for the outcome. (or there is some other covariate
+that contributes that has not been measured, that would be masked in the
+residuals of the predictor)
+
+However, predictor variables can be related to one another in other
+non-additive ways. The idea of statistical conditioning doesn't change
+in those cases, but the details do, and residual plots are no longer
+useful for those.
+
+**WARNING!** **Residuals are parameters, not data**. Some people compute
+the residuals and use them as data in another model. This is wrong. This
+throws away the uncertainty of the residuals. The right way to do
+conditioning is to **add them to the same model (preferably designed in
+light of an explicit causal model).**
+
+### 5.1.5.2 Posterior prediction plots
+
+Plotting predictions of the outcome variable against the observed
+outcome values.
+
+1) Did the model correctly approximate the posterior distribution?
+
+2) How does the model fail? - By inspecting the individual cases in
+which the model makes poor predictions we can get an idea of how to
+improve it. Look for patterns that underlie bad predictions. What
+could've caused those bad predictions? Is there anything in common
+between them?
+
+Start by simulating from the posterior (averaging over the posterior,
+posterior predictive distribution)
+
+```{r}
+# call link without specifying new data
+# so it uses the original data
+mu <- link(m5.3)
+
+# summarize samples across cases
+mu_mean <- apply(mu, 2, mean)
+mu_PI <- apply(mu, 2, PI)
+
+# simulate observations
+D_sim <- sim(m5.3, m=1e4)
+D_PI <- apply(D_sim, 2, PI)
+```
+
+```{r}
+plot(mu_mean ~ d$D, col=rangi2, ylim=range(mu_PI),
+     xlab="Observed divorce", ylab="Preddicted divorce")
+abline(a=0, b=1, lty=2)
+for(i in 1:nrow(d)) lines(rep(d$D[i], 2), mu_PI[, i], col=rangi2)
+```
+
+### 5.1.5.3 Counterfactual plots
+
+Display how the outcome would change when we change one of the
+predictors. Predictions of imaginary data. Changing one predictor might
+change others depending on the causal relationships.
+
+1.  Pick a variable to manipulate, the **intervention variable**
+2.  Define the range of values to set the intervention variable to
+3.  For each value of the intervention variable, and for each sample in
+    posterior, use the causal model to simulate the values of other
+    variables, including the outcome
+
+Let's do the counterfactial plot of A on the outcome D. Considering the
+DAG
+
+```{r}
+plot(dag5.1)
+```
+
+When we intervene on A we also change the other variable M. We need to
+add that to our model.
+
+Two regressions at the same time
+
+```{r}
+m5.3_A <- quap(
+  alist(
+    ## A -> D <- M
+    D ~ dnorm(mu, sigma),
+    mu <- a + bM * M + bA * A,
+    a ~ dnorm(0, 0.2),
+    bM ~ dnorm(0, 0.5),
+    bA ~ dnorm(0, 0.5),
+    sigma ~ dexp(1),
+    ## A -> M
+    M ~ dnorm(mu_M, sigma_M),
+    mu_M <- aM + bAM * A,
+    aM ~ dnorm(0, 0.2),
+    bAM ~ dnorm(0, 0.5),
+    sigma_M ~ dexp(1)
+  ), data = d)
+```
+
+```{r}
+precis(m5.3_A)
+```
+
+Looking at the parameters, we can see what we saw before for bM and bA.
+When added to the same multiple regression bM becomes close to 0. We
+also see that bAM is negative, showing a strong negative association of
+A and M. Manipulating A would reduce M.
+
+Now we define a range of values for A - the intervention
+
+```{r}
+A_seq <- seq(from=-2, to=2, length.out=30)
+```
+
+```{r}
+# prep data
+sim_dat <- data.frame(A=A_seq)
+
+# simulate M and then D, using A_seq
+s <- sim(m5.3_A, data=sim_dat, vars=c("M", "D"))
+```
+
+```{r}
+plot(sim_dat$A, colMeans(s$D), ylim=c(-2, 2), type="l",
+     xlab="manipulated A", ylab="counterfactual D")
+shade(apply(s$D, 2, PI), sim_dat$A)
+mtext("Total counterfactual effect of A on D (A->D + A->M->D)")
+```
+
+```{r}
+plot(sim_dat$A, colMeans(s$M), ylim=c(-2, 2), type="l",
+     xlab="manipulated A", ylab="counterfactual M")
+shade(apply(s$M, 2, PI), sim_dat$A)
+mtext("Counterfactual effect of A on M (A->M)")
+```
+
+We can also inspect numerical summaries like: What is the effect of
+increasing median age at marriage from 20 to 30?
+
+```{r}
+# new data frame, standardized to mean 26.1 and std 1.24
+sim2_dat <- data.frame(A=((c(20, 30) - 26.1)/1.24))
+s2 <- sim(m5.3_A, data=sim2_dat, vars=c("M", "D"))
+mean(s2$D[, 2] - s2$D[, 1])
+```
+
+This is a huge effect of 4.6 standard deviations, probably impossibly
+large.
+
+We need to realize that by manipulating one variable we break the causal
+influence of other variables on that variable. E.g. if we manipulate M
+then we break the causal relationship A -\> M. We are simulating M, it
+is not taken from real data where the A -\> M exists. Those values of M
+are purely the result of our manipulation.
+
+Let's see what manipulating M does to D
+
+```{r}
+sim_dat <- data.frame(M=seq(from=-2, to=2, length.out=30), A=0)
+s <- sim(m5.3_A, data=sim_dat, vars="D")
+
+plot(sim_dat$M, colMeans(s), ylim=c(-2, 2), type="l",
+     xlab="manipulated M", ylab="counterfactual D")
+shade(apply(s, 2, PI), sim_dat$M)
+mtext("Counterfactual effect of M on D (M->D)")
+```
+
+Almost no effect, because there is no evidence for a strong influence of
+M on D.

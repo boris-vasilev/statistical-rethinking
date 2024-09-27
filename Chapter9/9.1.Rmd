@@ -1,0 +1,43 @@
+# 9.1 Good King Markov and his island kingdom
+
+The estimation of posterior probability using a **stochastic process** known as **Markov chain Monte Carlo (MCMC)**
+
+Unlike previous chapters, here we'll produce samples from the joint posterior without maximising anything.
+
+Instead of using quadratic approximation where we assume a Gaussian shape at the peak of the posterior, we'll use MCMC which doesn't make assumptions about the shape of the posterior.
+
+The cost of this is that MCMC is takes longer to complete.
+
+Most importantly, MCMC can estimate models such as GLMs and multilevel models later that are impossible to approximate with quap.
+
+Metropolis algorithm to traverse the islands (*from the book):*
+
+```{r}
+num_weeks <- 1e5
+positions <- rep(0,num_weeks)
+current <- 10
+for ( i in 1:num_weeks ) {
+  ## record current position
+    positions[i] <- current
+  ## flip coin to generate proposal
+    proposal <- current + sample( c(-1,1) , size=1 )
+  ## now make sure he loops around the archipelago
+    if ( proposal < 1 ) proposal <- 10
+    if ( proposal > 10 ) proposal <- 1
+  ## move?
+    prob_move <- proposal/current
+    current <- ifelse( runif(1) < prob_move , proposal , current )
+}
+```
+
+```{r}
+plot(1:100, positions[1:100], xlab="week", ylab="island")
+```
+
+```{r}
+plot(table(positions), xlab="island", ylab="number of weeks")
+```
+
+In the long run the king has traversed the islands proportional to the population following this stochastic process.
+
+The restriction for visiting only neighboring islands is not necessary. If we allow any move, as long as the ration of the proposal to the current island population is used as a probability of moving, in the long run, it will converge to the right proportions.

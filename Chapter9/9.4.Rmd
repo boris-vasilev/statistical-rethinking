@@ -1,0 +1,148 @@
+# 9.4 Easy HMC: ulam
+
+The rethinking package has a function - **ulam** that takes formula lists like quap but requires a bit more housekeeping - preprocess any variable transformations and remove variables that are not used.
+
+```{r}
+library(rethinking)
+data(rugged)
+d <- rugged
+d$log_gdp <- log(d$rgdppc_2000)
+dd <- d[ complete.cases(d$rgdppc_2000) , ]
+dd$log_gdp_std <- dd$log_gdp / mean(dd$log_gdp)
+dd$rugged_std <- dd$rugged / max(dd$rugged)
+dd$cid <- ifelse( dd$cont_africa==1 , 1 , 2 )
+```
+
+```{r}
+m8.3 <- quap(
+    alist(
+        log_gdp_std ~ dnorm( mu , sigma ) ,
+        mu <- a[cid] + b[cid]*( rugged_std - 0.215 ) ,
+        a[cid] ~ dnorm( 1 , 0.1 ) ,
+        b[cid] ~ dnorm( 0 , 0.3 ) ,
+        sigma ~ dexp( 1 )
+    ) , data=dd )
+precis( m8.3 , depth=2 )
+```
+
+## 9.4.1 Preparation
+
+1.  Preform all variable transformations. E.g. for polynomial regression, create new variables that are the squared or cubed versions of the predictor.
+2.  Remove vars that are not used.
+
+```{r}
+dat_slim <- list(
+    log_gdp_std = dd$log_gdp_std,
+    rugged_std = dd$rugged_std,
+    cid = as.integer( dd$cid )
+)
+str(dat_slim)
+```
+
+Better to use a list than a dataframe because it allows different lengths
+
+## 9.4.2 Sampling from the posterior
+
+```{r}
+m9.1 <- ulam(
+  alist(
+    log_gdp_std ~ dnorm(mu, sigma),
+    mu <- a[cid] + b[cid]*( rugged_std - 0.215 ) ,
+      a[cid] ~ dnorm( 1 , 0.1 ) ,
+      b[cid] ~ dnorm( 0 , 0.3 ) ,
+      sigma ~ dexp( 1 )
+  ),
+data=dat_slim, chains = 1)
+```
+
+```{r}
+precis(m9.1, depth = 2)
+```
+
+The output from precis() is almost the same as the quap model with some differences. The rhat and ess_bulk columns here are MCMC diagnostic criteria. ess_bulk is an estimate of the number of independent samples that the HMC managed to get (ess - effective sample size). Rhat ($\hat{R}$) is an indicator of convergence of the Markov chains to the target distribution. It should approach 1 from above, when all went well.
+
+## 9.4.3 Sampling again, in parallel
+
+This example is very simple for MCMC. Even the default 1000 samples is enough for accurate inference.
+
+But we also want to run multiple chains, for reasons we'll discuss in chapter 9.5.
+
+We can easily run those chains in parallel by providing the cores parameter.
+
+```{r}
+m9.1 <- ulam(
+  alist(
+    log_gdp_std ~ dnorm(mu, sigma),
+    mu <- a[cid] + b[cid]*( rugged_std - 0.215 ) ,
+      a[cid] ~ dnorm( 1 , 0.1 ) ,
+      b[cid] ~ dnorm( 0 , 0.3 ) ,
+      sigma ~ dexp( 1 )
+  ),
+data=dat_slim, chains = 4, cores = 4)
+```
+
+```{r}
+precis(m9.1, depth = 2)
+```
+
+Show() gives a summary of the model specification and how long each chain took.
+
+```{r}
+show(m9.1)
+```
+
+## 9.4.4 Visualization
+
+```{r}
+pairs(m9.1)
+```
+
+We see that the posterior is close to a multivariate Gaussian (note all the parameter density plots along the diagonal).
+
+Below the diagonal we see a correlation matrix of each parameter pair, and above the diagonal - a scatterplot of the parameter pairs.
+
+This approximation by HMC is almost the same as the quap approximation. This model is very simple with Gaussian priors so it's no surprise that the posterior is approximately quadratic. With other more exotic posteriors quap will struggle.
+
+## 9.4.5 Checking the chain
+
+Provided the Markov chain is defined correctly, then it is guaranteed to converge in the long run to the answer we want, the posterior distribution.
+
+But some distributions are hard to explore and they take a very long time to provide an unbiased approximation. Such problems are rarer for HMC but still exist.
+
+HMC tells us when things are going wrong.
+
+**Trace plot**
+
+A trace plot plots the samples in sequential order joined by a line.
+
+```{r}
+traceplot(m9.1)
+```
+
+```{r}
+traceplot(m9.1, chains=1)
+```
+
+The first half of the plot (the grey region) is the first 500 samples, the *adaptation* samples. Those samples are used by the sampler while the Markov chain is learning to more efficiently sample from the posterior. They are not reliable for inference and are discarded by extract.samples.
+
+In a trace plot we look for three things to see if the chain is healthy:
+
+1.  **stationarity** - the path of each chain stays withing the same high-probability portion of the posterior. The mean value of the chain is quite stable from beginning to end. In the plots above we can see how each of the chains stays within the same region.
+2.  **good mixing** - the chain rapidly explores the full region. It doesn't slowly wander, but rapidly zigzags around, as a good Hamiltonian chain should. This can be seen in the plots above.
+3.  **convergence** - multiple independent chains stick around the same region. If we plot all four chains we see that they're all in the same portion, they overlap.
+
+Trace plots are a natural way to view a chain but are often hard to read when there are many chains plotted over one another.
+
+**Trank plot (Trace rank plot)**
+
+It takes all the samples and ranks them. The lowest sample gets rank 1 the highest sample gets maximum rank (the number of samples across all chains). Then we draw a histogram of these ranks for each individual chain. If the chains are exploring the same space efficiently, the histograms should be similar to one another and largely overlapping.
+
+```{r}
+trankplot(m9.1)
+```
+
+That's what we're hoping for. The trank plots are overlapping and staying in the same range.
+
+```{r}
+trankplot(m9.1)
+```

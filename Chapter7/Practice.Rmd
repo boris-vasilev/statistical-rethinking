@@ -1,0 +1,366 @@
+# 7E1
+
+We want to measure the uncertainty of a probability distribution:
+
+-   the more different states that exist, the larger the uncertainty
+
+-   the more spread out the pointwise probabilities are, the larger the uncertainty
+
+-   the measure of uncertainty should be continuous so that small changes in the probabilities don't cause massive changes in the measure.
+
+Information entropy covers all three criteria:
+
+$$
+H(p) = -E log(p) = -\sum_{i=1}^n{p_ilog(p_i)}
+$$
+
+# 7E2
+
+```{r}
+probs <- c(0.7, 0.3)
+H <- -sum(probs*log(probs))
+H
+```
+
+# 7E3
+
+```{r}
+probs <- c(0.2, 0.25, 0.25, 0.3)
+H <- -sum(probs*log(probs))
+H
+```
+
+Larger entropy than the coin because of the more states and more spread out probability distribution.
+
+# 7E4
+
+It would have lower entropy because of the less states even though the other 3 states are uniformly distributed.
+
+```{r}
+probs <- c(0.33, 0.33, 0.33)
+H <- -sum(probs*log(probs))
+H
+```
+
+# 7M1
+
+$$
+AIC = D_{train} + 2p = -2lppd + 2p
+$$
+
+$$
+WAIC(y, \theta) = -2lppd - 2\sum_{i} var_\theta logp(y_i|\theta)
+$$
+
+WAIC is more general because unlike AIC it doesn't assume a Gaussian posterior and uniform priors.
+
+# 7M2
+
+Model selection is picking the best performing model solely based on out-of-sample deviance. Model comparison uses out-of-sample deviance to reason about the influence of different variables and in combination with a causal model, and its implied conditional independencies, help us infer causality.
+
+In model selection the differences between the out-of-sample deviance measures is lost - pick the best, throw the rest. Model comparison considers these differences. They tell us something about the influence of variables on the outcome.
+
+# 7M3
+
+When comparing models with ICs, we must fit the models on the same observations. If not, the model that's fit on more observations would likely have better deviance simply because we can be less uncertain about a model that received more data to be fit on. The IC loses its meaning as a comparison measure.
+
+# 7M4
+
+More concentrated (more informative) priors lead to less overfitting, and the model is less sensitive to the sample. So out-of-sample deviance estimates like PSIS or WAIC tend to get better (smaller).
+
+# 7M5
+
+Informative priors reduce overfitting because the prior knowledge encoded in the more informative priors makes the model less sensitive to what it sees in the data. Individual observations have less effect on the shape of the posterior because the prior is biased. It's like throwing data at someone that is very opinionated. It would be much harder to convince someone that is more opinionated (has informative priors) than someone that comes in as a blank slate (uniform priors)
+
+# 7M6
+
+For the same reason this can lead to underfitting. If you get someone that is very convinced that the earth is flat, even if you throw them the most convincing data, they won't be convinced. If you get a child with less knowledge of the world, they can be convinced more easily that the earth is round.
+
+# 7H1
+
+```{r}
+library(rethinking)
+data("Laffer")
+d <- Laffer
+```
+
+```{r}
+m7H1 <- quap(
+  alist(
+    tax_revenue ~ dnorm(mu, sigma),
+    mu <- b*tax_rate,
+    b ~ dnorm(0, 1),
+    sigma ~ dexp(1)
+  ),
+data=d)
+```
+
+```{r}
+m7H1_straight_line <- quap(
+  alist(
+    tax_revenue ~ dnorm(mu, sigma),
+    mu <- a + b,
+    a ~ dnorm(0, 1),
+    b ~ dnorm(0, 1),
+    sigma ~ dexp(1)
+  ),
+data=d)
+```
+
+```{r}
+compare(m7H1, m7H1_straight_line)
+```
+
+The model with tax rate barely makes any difference in WAIC. Tax rate and tax revenue are not related.
+
+# 7H2
+
+```{r}
+PSIS(m7H1)
+```
+
+```{r}
+PSIS_m7H1 <- PSIS(m7H1,pointwise=TRUE)
+WAIC_m7H1 <- WAIC(m7H1,pointwise=TRUE)
+plot( PSIS_m7H1$k , WAIC_m7H1$penalty , xlab="PSIS Pareto k" ,
+    ylab="WAIC penalty" , col=rangi2 , lwd=2 )
+```
+
+The Pareto k of the outlier is close to 2 much higher than 0.5, and the WAIC penalty is 5.
+
+```{r}
+m7H1_robust <- quap(
+  alist(
+    tax_revenue ~ dstudent(3, mu, sigma),
+    mu <- b*tax_rate,
+    b ~ dnorm(0, 1),
+    sigma ~ dexp(1)
+  ),
+data=d)
+```
+
+```{r}
+compare(m7H1, m7H1_robust)
+```
+
+The robust regression with Student-t posterior distribution has lower WAIC.
+
+```{r}
+plot(compare(m7H1, m7H1_robust))
+```
+
+The overall penalty has dropped from 6.4 to 2.4.
+
+The 99% interval lower end is close to 0 likely because of the small number of observations.
+
+# 7H3
+
+```{r}
+d <- t(data.frame(
+  I1 = c(0.2, 0.2, 0.2, 0.2, 0.2),
+  I2 = c(0.8, 0.1, 0.05, 0.025, 0.025),
+  I3 = c(0.05, 0.15, 0.7, 0.05, 0.05)
+))
+```
+
+Calculating entropy:
+
+```{r}
+apply(d, 1, function(x) {-sum(x*log(x))})
+```
+
+I2 has the lowest entropy. As expected I1 has a much higher entropy because of the more flatter distribution.
+
+Use each island to predict the other two. Compute the KL divergence of each island from the others.
+
+**Island 1**
+
+```{r}
+#I1
+I1 <- d[1,]
+apply(d, 1, function(x) {-sum(I1*(log(x) - log(I1)))})
+```
+
+**Island 2**
+
+```{r}
+#I2
+I2 <- d[2,]
+apply(d, 1, function(x) {-sum(I2*(log(x) - log(I2)))})
+```
+
+**Island 3**
+
+```{r}
+#I3
+I3 <- d[3,]
+apply(d, 1, function(x) {-sum(I3*(log(x) - log(I3)))})
+```
+
+Island 1 is the best at predicting the other two. That is because of its flat distribution. It is closer to the other two than the other one that is biased for one of the other species.
+
+Island 1 is like a middle ground.
+
+# 7H4
+
+```{r}
+library(rethinking)
+d <- sim_happiness(seed=1977, N_years = 1000)
+d2 <- d[d$age > 17,]
+d2$A <- (d2$age - 18) / (65-18)
+```
+
+Recall that A is age, mid is marriage status - 0 or 1, and happiness.
+
+mid is a collider because A influence mid and happiness influences mid.
+
+So it shouldn't be included in the model because conditioning on it would cause spurious correlation between age and happiness
+
+```{r}
+d2$mid <- d2$married + 1
+m6.9 <- quap(
+    alist(
+        happiness ~ dnorm( mu , sigma ),
+        mu <- a[mid] + bA*A,
+        a[mid] ~ dnorm( 0 , 1 ),
+        bA ~ dnorm( 0 , 2 ),
+        sigma ~ dexp(1)
+    ) , data=d2 )
+precis(m6.9,depth=2)
+```
+
+```{r}
+m6.10 <- quap(
+    alist(
+        happiness ~ dnorm( mu , sigma ),
+        mu <- a + bA*A,
+        a ~ dnorm(0, 1),
+        bA ~ dnorm( 0 , 2 ),
+        sigma ~ dexp(1)
+    ) , data=d2 )
+precis(m6.10,depth=2)
+```
+
+```{r}
+compare(m6.9, m6.10)
+```
+
+```{r}
+plot(compare(m6.9, m6.10))
+```
+
+m6.9 has a significantly better predictive accuracy. The model that includes the collider MID.
+
+But model m6.10 provides the better causal inference about the influence of age on happiness because both affect MID and if we include MID we cause a spurious association between happiness and age.
+
+However MID has a lot of value for predicting happiness so including it in the model improves predictions.
+
+# 7H5
+
+```{r}
+library(rethinking)
+data("foxes")
+d <- foxes
+```
+
+116 foxes from 30 different urban groups in England. These foxes are like street gangs. Group sizes vary from 2 to 8 individuals - **groupsize**. Each group maintains its own territory. Some territories are larger than others 0 **area**. Some territories have more food - **avgfood**. We want to model the **weight** of each fox.
+
+```{r}
+d$G <- standardize(d$groupsize)
+d$A <- standardize(d$area)
+d$W <- standardize(d$weight)
+d$F <- standardize(d$avgfood)
+```
+
+```{r}
+m1 <- quap(
+  alist(
+    W ~ dnorm(mu, sigma),
+    mu <- bF*F + bG*G + bA*A,
+    bF ~ dnorm(0, 1),
+    bG ~ dnorm(0, 1),
+    bA ~ dnorm(0, 1),
+    sigma ~ dexp(1)
+  ),
+data = d)
+
+m2 <- quap(
+  alist(
+    W ~ dnorm(mu, sigma),
+    mu <- bF*F + bG*G,
+    bF ~ dnorm(0, 1),
+    bG ~ dnorm(0, 1),
+    sigma ~ dexp(1)
+  ),
+data = d)
+
+m3 <- quap(
+  alist(
+    W ~ dnorm(mu, sigma),
+    mu <- bG*G + bA*A,
+    bG ~ dnorm(0, 1),
+    bA ~ dnorm(0, 1),
+    sigma ~ dexp(1)
+  ),
+data = d)
+
+m4 <- quap(
+  alist(
+    W ~ dnorm(mu, sigma),
+    mu <- bF*F,
+    bF ~ dnorm(0, 1),
+    sigma ~ dexp(1)
+  ),
+data = d)
+
+m5 <- quap(
+  alist(
+    W ~ dnorm(mu, sigma),
+    mu <- bA*A,
+    bA ~ dnorm(0, 1),
+    sigma ~ dexp(1)
+  ),
+data = d)
+```
+
+```{r}
+compare(m1, m2, m3, m4, m5)
+```
+
+```{r}
+plot(compare(m1, m2, m3, m4, m5))
+```
+
+m4 and m5 are significantly worse in prediction.
+
+m1 is the best as expected because it has all paths for the variables to influence the outcome weight.
+
+However, the difference between m1, m2, m3 is not significant (small dWAIC, big dSE)
+
+Once we know F there is no other path by which A can influence W. A acts only through mediation via F. That explains why m2 and m3 are almost identical. Also why m4 and m5 are almost identical.
+
+It seems like group size G has a high influence on W even though part of that is the mediated effect of A.
+
+Observing the parameters of m2 gives us a good idea of that causal relationship
+
+```{r}
+precis(m2)
+```
+
+```{r}
+plot(m2)
+```
+
+```{r}
+m6 <- quap(
+  alist(
+    W ~ dnorm(mu, sigma),
+    mu <- bG*G,
+    bG ~ dnorm(0, 1),
+    sigma ~ dexp(1)
+  ),
+data = d)
+plot(coeftab(m2, m4, m6), pars=c('bF', 'bG'))
+```
+
+bF becomes significant only after conditioning on G. The effect of F -\> W is small in comparison to G -\> W.

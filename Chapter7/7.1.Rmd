@@ -1,0 +1,19 @@
+# 7.1 The problem with parameters
+
+Prediction and causal inference are two different tasks. Often a good predictive model is a black box that doesn't tell us anything about the causal relationships. Adding a collider might be good for prediction purposes but make it impossible to infer causality.
+
+$R^2$ is a commonly used measure of fit for linear models. It is 'variance explained'.
+
+$$
+R^2 = \frac{var(outcome) - var(residuals)}{var(outcome)} = 1 - \frac{var(residuals)}{var(outcome)}
+$$
+
+The higher degree polynomial we fit to the same data will always improve $R^2$. To the point where a model is a crazy good fit to the data but doesn't generalize at all to unseen data. (**Overfitting**)
+
+**Underfitting** is also a problem. If we make a very simple model it would have low $R^2$ and will be a bad fit to the data.
+
+We have to be careful about those two problems and balance between the two (the **bias-variance tradeoff**)
+
+Fitting a model can be thought of as a way of **data compression**. When we add few parameters we're 'compressing' the data to a representation with only a few parameters. When we fit a model with as many parameters as there are samples there is no compression. This view of model selection is known as **minimum description length (MDL)**.
+
+Another consequence of overfitting/underfitting is the sensitivity to the sample. If we omit one row of the sample, an underfit (simple) model won't change much, it is not very sensitive. On the other hand, omitting a single row would drastically change the estimation of an overfit (complex) model.

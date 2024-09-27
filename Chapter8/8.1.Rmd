@@ -1,0 +1,374 @@
+# 8.1 Building an interaction
+
+When we have a causal DAG with a relationship like R -\> G \<- C, it doesn't actually tell us how R and C influence G, if they independently influence G or through **interaction (moderation)** Maybe the combination of R and C tells us more about the effect of their relationship with G than the two on their own. The DAG can't show us that.
+
+**DAGs don't specify how variables combine to influence other variables, only that there is a function that uses R and C to generate G. I.e.** $G = f(R, C)$**.**
+
+We need a statistical approach to judge different propositions of $f(R, C)$.
+
+We focus first on interactions between a categorical and a continuous variable.
+
+We could split the dataset based on the categorical variable into the different values of the categorical. But it's not a good idea because:
+
+1.  There are parameters such as $\sigma$ that we've been using a lot - the standard deviation of the posterior. Parameters like $\sigma$ don't depend in any way on the categorical. By splitting the data, we're hurting the accuracy of the estimates for these parameters because we're essentially making two less-accurate estimates. In effect we have accidentally assumed that the variance differs between African and non-African nations *(see example in book for context)*. We want to avoid accidental assumptions.
+2.  If we split the data we lose information about the uncertainty about the parameters for the categorical variable. The data is split into two parts so it's not part of either model, and as a result there is no parameter (like $\beta_{continent}$) with a prior that would tell us about the uncertainty of this parameter. We don't estimate that uncertainty when we split the data.
+3.  Information criteria (from chapter 7) like WAIC/PSIS and other methods to compare models only work when the models are fit on the same data. If we use different data and we want to compare the model with all continents and the ones that split by continent, WAIC estimates won't have the same meaning and won't be comparable.
+4.  Multilevel models (chapter 13) borrow information across categories and that helps when sample sizes vary across categories, such that overfitting risk is higher in some categories. Not including the variable for the category stops us from using this 'borrowing of information'. What we learn about a variable within one category could inform our inference for that variable in other categories.
+
+## 8.1.1 Making a rugged model
+
+Let's see how to recover the reversal of slope between Africa/non-Africa cotninents, within the same model.
+
+We begin by fitting a single model to all data, ignoring continent.
+
+```{r}
+library(rethinking)
+data(rugged)
+d <- rugged
+```
+
+```{r}
+# log transform GDP
+d$log_gdp <- log(d$rgdppc_2000)
+
+# extract countries with GDP data
+dd <- d[complete.cases(d$rgdppc_2000),]
+
+# rescale variables
+dd$log_gdp_std <- dd$log_gdp/mean(dd$log_gdp)
+dd$rugged_std <- dd$rugged/max(dd$rugged)
+```
+
+We divide by the mean instead of Z-transform because 0 ruggedness - flat - is more meaningful than having negative ruggedness. Same goes for GDP.
+
+**Defining the linear model**
+
+Let's start with the basic geocentric skeleton:
+
+$$
+log(y_i) \sim Normal(\mu_i, \sigma) \\
+\mu_i = \alpha + \beta(r_i - \bar{r})
+$$
+
+How do we specify the priors?
+
+**Defining the priors**
+
+Start with $\alpha$ which is the log GDP when ruggedness is at the sample mean. So it must be close to 1, because we scaled the outcome so that the mean is 1.
+
+```{r}
+mean(dd$log_gdp_std)
+```
+
+$$
+\alpha \sim Normal(1, 1)
+$$
+
+Now for $\beta$, the slope. If we center it at zero, that indicates no bias for positive or negative, which makes sense. But what about the standard deviation? Let's *start with 1 and evaluate that guess by simulating prior predictive distributions*.
+
+$$
+\beta \sim Normal(0,1)
+$$
+
+Next we need a prior for $\sigma$. Let's use something broad like
+
+$$
+\sigma \sim Exponential(1)
+$$
+
+The mean ruggedness $\bar{r}$ is
+
+```{r}
+mean(dd$rugged_std)
+```
+
+```{r}
+m8.1 <- quap(
+  alist(
+    log_gdp_std ~ dnorm(mu, sigma),
+    mu <- a + b*(rugged_std - 0.215),
+    a ~ dnorm(1, 1),
+    b ~ dnorm(0, 1),
+    sigma ~ dexp(1)
+  ),
+data = dd)
+```
+
+We're not going to look at the posterior predictions yet. First we look at the prior predictions.
+
+```{r}
+set.seed(7)
+prior <- extract.prior(m8.1)
+
+# set up the plot dimensions
+plot(NULL, xlim=c(0, 1), ylim=c(0.5, 1.5),
+     xlab='ruggedness', ylab='log GDP')
+abline(h=min(dd$log_gdp_std), lty=2)  # minimum scaled log GDP
+abline(h=max(dd$log_gdp_std), lty=2)  # maximum scaled log GDP
+
+# draw 50 lines from the prior
+rugged_seq <- seq(from=-0.1, to=1.1, length.out=30)
+mu <- link(m8.1, post=prior, data=data.frame(rugged_std=rugged_seq))
+for (i in 1:50) lines(rugged_seq, mu[i, ], col=col.alpha('black', 0.3))
+```
+
+From the plot above we see that there are both positive and negative lines, which is what we want. But some of them are impossible.
+
+Considering our measurement scales, the lines should pass closer to the mean ruggedness - 0.215 and closer to the mean GDP of 1. We should use a tighter standard deviation on the $\alpha$ prior. $\alpha \sim Normal(1, 0.1)$
+
+A Normal(1, 0.1) prior assigns 95% of the probability mass within 2 standard deviations so between 0.8 and 1.2 which looking at the punctuated lines for min/max log GDP above seems reasonable.
+
+```{r}
+m8.1a <- quap(
+  alist(
+    log_gdp_std ~ dnorm(mu, sigma),
+    mu <- a + b*(rugged_std - 0.215),
+    a ~ dnorm(1, 0.1),
+    b ~ dnorm(0, 1),
+    sigma ~ dexp(1)
+  ),
+data = dd)
+set.seed(7)
+prior <- extract.prior(m8.1a)
+
+# set up the plot dimensions
+plot(NULL, xlim=c(0, 1), ylim=c(0.5, 1.5),
+     xlab='ruggedness', ylab='log GDP')
+abline(h=min(dd$log_gdp_std), lty=2)  # minimum scaled log GDP
+abline(h=max(dd$log_gdp_std), lty=2)  # maximum scaled log GDP
+
+# draw 50 lines from the prior
+rugged_seq <- seq(from=-0.1, to=1.1, length.out=30)
+mu <- link(m8.1a, post=prior, data=data.frame(rugged_std=rugged_seq))
+for (i in 1:50) lines(rugged_seq, mu[i, ], col=col.alpha('black', 0.3))
+```
+
+From the plot above we see that some of the lines also have crazy slopes. An implausably strong association between ruggedness and log GDP. And implausable line would go from minimum ruggedness and one extreme of log GDP (min or max) and maximum ruggedness and the other extreme log GDP (max or min).
+
+The slope of such a line must be about $1.3 - 0.7 = 0.6$, the difference between the maximum and minimum observed proportional log GDP. But many lines have much more extreme slopes.
+
+```{r}
+sum(abs(prior$b) > 0.6) / length(prior$b)
+```
+
+Over 50% of the lines have more extreme slopes.
+
+Let's try $\beta \sim Normal(0, 0.3)$ instead. This prior makes slopes 0.6 and 2 standard deviations out.
+
+```{r}
+m8.1 <- quap(
+  alist(
+    log_gdp_std ~ dnorm(mu, sigma),
+    mu <- a + b*(rugged_std - 0.215),
+    a ~ dnorm(1, 0.1),
+    b ~ dnorm(0, 0.3),
+    sigma ~ dexp(1)
+  ),
+data = dd)
+set.seed(7)
+prior <- extract.prior(m8.1)
+
+# set up the plot dimensions
+plot(NULL, xlim=c(0, 1), ylim=c(0.5, 1.5),
+     xlab='ruggedness', ylab='log GDP')
+abline(h=min(dd$log_gdp_std), lty=2)  # minimum scaled log GDP
+abline(h=max(dd$log_gdp_std), lty=2)  # maximum scaled log GDP
+
+# draw 50 lines from the prior
+rugged_seq <- seq(from=-0.1, to=1.1, length.out=30)
+mu <- link(m8.1, post=prior, data=data.frame(rugged_std=rugged_seq))
+for (i in 1:50) lines(rugged_seq, mu[i, ], col=col.alpha('black', 0.3))
+```
+
+That's much better.
+
+Let's now look at the posterior.
+
+```{r}
+precis(m8.1)
+```
+
+No overall association between terrain ruggedness and log GDP. Next we'll incorporate the continent variable.
+
+## 8.1.2 Adding an indicator variable isn't enough
+
+We'll apprach this as a model comparison exercise. The easiest way to add continent to the model is
+
+$$
+\mu_i = \alpha + \beta(r_i - \bar{r}) + \gamma A_i
+$$
+
+where $A_i$ is an indicator variable 0/1 for not Africa/Africa. This convention is often a bad idea so we're not going to follow it.
+
+The problem is that we need a prior for $\gamma$. But what this prior will do is tell the model that $\mu_i$ for a nation in Africa is more uncertain before seeing the data, than $\mu_i$ outside of Africa. The parameter $\gamma$ represents the expected *difference* between the two categories, when we use an indicator (0/1). Another consequence of assigning a prior for the difference is that this approach assumes that there is more uncertainty about African countries (the 1 category). That is because a prediction for Africa would include three parameters ($\alpha, \beta, \gamma$) whereas for non-African - just two $\alpha$ and $\beta$ (because the indicator $A_i$ is zero for non-African, the $\gamma$ parameter doesn't play a role).
+
+A solution for that is to use two different intercepts for Africa/non-Africa:
+
+$$
+\mu_i = \alpha_{CID[i]} + \beta(r_i - \bar{r})
+$$ where $CID[i]$ here is an index variable, continent ID. It's 1 for Africa, 2 for non-Africa, This means that there are two different parameters $\alpha_1$ and $\alpha_2$.
+
+```{r}
+dd$cid <- ifelse(dd$cont_africa==1, 1, 2)
+```
+
+```{r}
+m8.2 <- quap(
+  alist(
+    log_gdp_std ~ dnorm(mu, sigma),
+    mu <- a[cid] + b*(rugged_std - 0.215),
+    a[cid] ~ dnorm(1, 0.1),
+    b ~ dnorm(0, 0.3),
+    sigma ~ dexp(1)
+  ),
+data = dd)
+```
+
+Now we compare the model that includes Continent with the one that didn't using WAIC
+
+```{r}
+compare(m8.1, m8.2)
+```
+
+m8.2 gets all the model weight. The difference dWAIC is 63.5 and the standard error of the difference is 15.15 so the difference is significant.
+
+We use *precis* to find out what the difference is
+
+```{r}
+precis(m8.2, depth = 2)
+```
+
+The intercept $\alpha_1$ for Africa is reliably lower than $\alpha_2$.
+
+The **posterior contrast** between the two is:
+
+```{r}
+post <- extract.samples(m8.2)
+diff_a1_a2 <- post$a[,1] - post$a[,2]
+PI(diff_a1_a2)
+```
+
+The difference is reliably below zero.
+
+Let's plot the posterior predictions of m8.1 and m8.2 to see how even though m8.2 is better in prediction than m8.1 (as shown by WAIC), it still doesn't manage to capture the different slopes between the two. (*See figure 8.4)*
+
+```{r}
+# plot Africa - cid=1
+d.A1 <- dd[ dd$cid==1 , ]
+plot( d.A1$rugged_std , d.A1$log_gdp_std , pch=16 , col=rangi2 ,
+    xlab="ruggedness (standardized)" , ylab="log GDP (as proportion of mean)" ,
+    xlim=c(0,1) )
+mu <- link( m8.2 , data=data.frame( cid=1 , rugged_std=rugged_seq ) )
+mu_mean <- apply( mu , 2 , mean )
+mu_ci <- apply( mu , 2 , PI , prob=0.97 )
+lines( rugged_seq , mu_mean , lwd=2 )
+shade( mu_ci , rugged_seq , col=col.alpha(rangi2,0.3) )
+mtext("African nations")
+
+# plot non-Africa - cid=2
+d.A0 <- dd[ dd$cid==2 , ]
+plot( d.A0$rugged_std , d.A0$log_gdp_std , pch=1 , col="black" ,
+    xlab="ruggedness (standardized)" , ylab="log GDP (as proportion of mean)" ,
+    xlim=c(0,1) )
+mu <- link( m8.2 , data=data.frame( cid=2 , rugged_std=rugged_seq ) )
+mu_mean <- apply( mu , 2 , mean )
+mu_ci <- apply( mu , 2 , PI , prob=0.97 )
+lines( rugged_seq , mu_mean , lwd=2 )
+shade( mu_ci , rugged_seq )
+mtext("Non-African nations")
+```
+
+## 8.1.3 Adding an interaction does work
+
+How can we recover the change in slope that we see between African/non-African countries?
+
+We need an interaction effect. Make the slope conditional on the continent.
+
+Instead of using
+
+$$
+\mu_i = \alpha_{CID[i]} + \beta(r_i - \bar{r})
+$$
+
+Use
+
+$$
+\mu_i = \alpha_{CID[i]} + \beta_{CID[i]}(r_i - \bar{r})
+$$
+
+where the slope $\beta$ now also depends on $CID[i]$.
+
+```{r}
+m8.3 <- quap(
+  alist(
+    log_gdp_std ~ dnorm(mu, sigma),
+    mu <- a[cid] + b[cid]*(rugged_std - 0.215),
+    a[cid] ~ dnorm(1, 0.1),
+    b[cid] ~ dnorm(0, 0.3),
+    sigma ~ dexp(1)
+  ),
+data = dd)
+```
+
+Let's see the **marginal posterior distributions**
+
+```{r}
+precis(m8.3, depth = 2)
+```
+
+The slope is reversed between the two categories: $\beta_1$ is 0.13, $\beta_2$ is -0.14.
+
+Let's compare the three models with PSIS.
+
+```{r}
+compare(m8.1, m8.2, m8.3, func = PSIS)
+```
+
+We get a warning for Pareto k values, hinting that there might be outliers that are impacting the PSIS estimation.
+
+We also see that the difference between m8.2 and m8.3 is not significant, and part of the weight (0.04) is given to the m8.2 model.
+
+These are signs that m8.3 is a little overfit.
+
+If we plot the PSIS Pareto k values for m8.3 we'll notice a few influential countries with k\>0.5.
+
+```{r}
+plot(PSIS(m8.3, pointwise = T)$k)
+abline(h=0.5, lty=2)
+```
+
+This is probably a good case for robust regression like Student-t regression.
+
+Remember that those estimates are not there to guide causal inference. They estimate prediction accuracy, not causality.
+
+## 8.1.4 Plotting the interaction
+
+```{r}
+# plot Africa - cid=1
+d.A1 <- dd[ dd$cid==1 , ]
+plot( d.A1$rugged_std , d.A1$log_gdp_std , pch=16 , col=rangi2 ,
+    xlab="ruggedness (standardized)" , ylab="log GDP (as proportion of mean)" ,
+    xlim=c(0,1) )
+mu <- link( m8.3 , data=data.frame( cid=1 , rugged_std=rugged_seq ) )
+mu_mean <- apply( mu , 2 , mean )
+mu_ci <- apply( mu , 2 , PI , prob=0.97 )
+lines( rugged_seq , mu_mean , lwd=2 )
+shade( mu_ci , rugged_seq , col=col.alpha(rangi2,0.3) )
+mtext("African nations")
+```
+
+```{r}
+# plot non-Africa - cid=2
+d.A0 <- dd[ dd$cid==2 , ]
+plot( d.A0$rugged_std , d.A0$log_gdp_std , pch=1 , col="black" ,
+    xlab="ruggedness (standardized)" , ylab="log GDP (as proportion of mean)" ,
+    xlim=c(0,1) )
+mu <- link( m8.3 , data=data.frame( cid=2 , rugged_std=rugged_seq ) )
+mu_mean <- apply( mu , 2 , mean )
+mu_ci <- apply( mu , 2 , PI , prob=0.97 )
+lines( rugged_seq , mu_mean , lwd=2 )
+shade( mu_ci , rugged_seq )
+mtext("Non-African nations")
+```
+
+Now we see the reversal of the slope and because it's achieved in a single model, we could statistically evaluate the value of this reversal.

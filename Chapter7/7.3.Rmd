@@ -1,0 +1,17 @@
+# 7.3 Golem taming: regularization
+
+One way to produce better predictions is to make the model worse at fitting the sample.
+
+The reason for overfitting is the model's tendency to get overexcited by the training sample.
+
+When we use flat priors, it means that every parameter values is equally plausible.
+
+As a result, the model returns a posterior that encodes as much of the training sample (as represented by the likelihood function) as possible.
+
+One way to prevent this is to use a skeptical prior. A prior that slows down the rate of learning from the sample. The **regularizing prior.**
+
+When tuned properly a regularizing prior reduces overfitting while still allowing the model to learn the regular features from the sample. If the prior is too skeptical it can lead to underfitting.
+
+In previous chapters we carefully chose our priors until the prior predictive distribution produced only reasonable outcomes. As a consequence, there priors regularize our model.
+
+In chapter 13 we see multilevel models. The ides is to learn the strength of the prior from the data itself. So in a sense multilevel models work as adaptive regularization, where the model tries to learn how skeptical it should be.

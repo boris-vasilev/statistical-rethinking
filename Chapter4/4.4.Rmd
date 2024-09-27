@@ -1,0 +1,532 @@
+# 4.4 Linear prediction
+
+## 4.4.2 The linear model strategy
+
+```{r}
+library(rethinking)
+```
+
+```{r}
+data("Howell1")
+d <- Howell1
+d2 <- d[d$age >= 18, ]
+```
+
+```{r}
+plot(d2$height ~ d2$weight)
+```
+
+**Gaussian model of height:**
+
+$h_i \sim Normal(\mu, \sigma)$ [likelihood] (1)
+
+$\mu \sim Normal(178, 20)$ [$\mu$ prior] (2)
+
+$\sigma \sim Uniform(0, 50)$ [$\sigma$ prior] (3)
+
+**Linear model of height (wrt weight - x):**
+
+$h_i \sim Normal(\mu_i, \sigma)$ [likelihood] (1)
+
+$\mu_i = \alpha + \beta(x_i - \bar{x})$ **[linear model] ([NEW]{.underline})**
+
+$\alpha \sim Normal(178, 20)$ [$\alpha$ prior] (2)
+
+$\beta \sim Normal(0, 10)$ [$\beta$ prior] **([NEW]{.underline})**
+
+$\sigma \sim Uniform(0, 50)$ [$\sigma$ prior] (3)
+
+The difference in the new model is the added relationship to the weight. Note that when $\beta = 0$ or $x_i=\bar{x}$ the weight has no effect ($\mu_i = \alpha$ and $\alpha \sim Normal(178, 20)$ so same as the basic Gaussian model $\mu_i \sim Normal(178, 20)$). The added $\beta$ parameter controls the effect weight difference from the mean affects the mean of the sample height. I.e. a person with a weight higher than the average population height will deviate from the mean height with $\beta(x_i - \bar{x})$ cm.
+
+**Note**: The mean now depends on the row $i$ because the row carries the information about the other covariates (e.g. weight).
+
+What this model aims to do is to find parameters $\alpha$ (average height for average weight - *the* *intercept*) and $\beta$ (rate of change of height wrt height - *the slope*) that relates weight to height.
+
+Why prior for $\beta = Normal(0, 10)$ ? As much probability above 0 as below 0 and at $\beta=0$ weight has no relationship to height.
+
+Let's simulate the **prior predictive distribution**
+
+```{r}
+set.seed(2971)
+N <- 100 # 100 lines
+a <- rnorm(N, 178, 20)
+b <- rnorm(N, 0, 10)
+```
+
+with b \<- rnorm(N, 0, 10) the range can get beyond what is plausible
+
+```{r}
+plot(NULL, xlim=range(d2$weight), ylim=range(-100, 300), xlab="weight", ylab="height")
+abline(h=0, lty = 2) # zero line
+abline(h=272, lty=1, lwd=0.5) # tallest human
+mtext("b ~ dnorm(0, 10)")
+xbar <- mean(d2$weight)
+
+for(i in 1:N) {
+  curve(a[i] + b[i]*(x - xbar),
+        from=min(d2$weight), to=max(d2$weight), add=T,
+        col=col.alpha("black", 0.2))
+}
+```
+
+with b \<- rnorm(N, 0, 5) looks better
+
+```{r}
+b <- rnorm(N, 0, 5)
+
+plot(NULL, xlim=range(d2$weight), ylim=range(-100, 300), xlab="weight", ylab="height")
+abline(h=0, lty = 2) # zero line
+abline(h=272, lty=1, lwd=0.5) # tallest human
+mtext("b ~ dnorm(0, 5)")
+xbar <- mean(d2$weight)
+
+for(i in 1:N) {
+  curve(a[i] + b[i]*(x - xbar),
+        from=min(d2$weight), to=max(d2$weight), add=T,
+        col=col.alpha("black", 0.2))
+}
+```
+
+with b \<- rnorm(N, 0, 2) fits better. Note some of the lines have a negative $\beta$ . This wouldn't make sense as in the human population when you're taller you weigh more. A negative correlation between height and weight wouldn't make sense.
+
+```{r}
+b <- rnorm(N, 0, 2)
+
+plot(NULL, xlim=range(d2$weight), ylim=range(-100, 300), xlab="weight", ylab="height")
+abline(h=0, lty = 2) # zero line
+abline(h=272, lty=1, lwd=0.5) # tallest human
+mtext("b ~ dnorm(0, 2)")
+xbar <- mean(d2$weight)
+
+for(i in 1:N) {
+  curve(a[i] + b[i]*(x - xbar),
+        from=min(d2$weight), to=max(d2$weight), add=T,
+        col=col.alpha("black", 0.2))
+}
+```
+
+We need to restrict $\beta$ to positive values for our model to make sense. A log-normally distributed $\beta$ would be positive. If the logarithm of $\beta$ is normal, then $\beta$ itself is strictly positive - because the $log(\beta)$ is not defined for $\beta < 0$ .
+
+Let's define the prior of $\beta$ as $\beta \sim \text{Log-Normal}(0, 1)$
+
+```{r}
+b <- rlnorm(1e4, 0, 1)
+dens(b, xlim=c(0,5), adj=0.1, xlab="betas")
+mtext("b ~ dlnorm(0, 1)")
+```
+
+```{r}
+b <- rlnorm(N, 0, 1)
+
+plot(NULL, xlim=range(d2$weight), ylim=range(-100, 300), xlab="weight", ylab="height")
+abline(h=0, lty = 2) # zero line
+abline(h=272, lty=1, lwd=0.5) # tallest human
+mtext("b ~ dlnorm(0, 1)")
+xbar <- mean(d2$weight)
+
+for(i in 1:N) {
+  curve(a[i] + b[i]*(x - xbar),
+        from=min(d2$weight), to=max(d2$weight), add=T,
+        col=col.alpha("black", 0.2))
+}
+```
+
+Just like p-hacking is a sin, choosing priors based on the observed data is wrong. Note that in the previous plots of the joint prior predictive distribution of $\alpha$ and $\beta$ we don't display the data and this is important. All our adjustments are based on our prior knowledge about height and weight not the observed data.
+
+## 4.4.2 Finding the posterior distribution
+
+```{r}
+m4.3 <- quap(alist(
+  height ~ dnorm(mu, sigma),
+  mu <- a + b*(weight - xbar),
+  a ~ dnorm(178, 20),
+  b ~ dlnorm(0, 1),
+  sigma ~ dunif(0, 50)
+), data = d2)
+```
+
+```{r}
+m4.3
+```
+
+**Everything that depends on parameters has a posterior distribution**. In the Gaussian model, $\mu$ was a parameter and had a posterior distribution. Here, $\mu$ is not a parameter but a function of two parameters $\alpha$ and $\beta$. As such, $\mu$ here **still has a posterior distribution** but here it depends on the joint posterior distribution of $\alpha$ and $\beta$. **Since parameters are uncertain so does everything that depends on parameters. That includes statistics such as** $\mu$, **model-based predictions, measures of fit, and everything else that uses parameters**. By working with samples from the posterior, all we have to do to account for this posterior uncertainty in any quantity (e.g. $\mu$) is to compute that quantity for each sample from the posterior (hence the change from $\mu$ in the basic Gaussian model to $\mu_i$ in the linear model - we calculate the $\mu$ for each sample $i$.
+
+## 4.4.3 Interpreting the posterior distribution
+
+Two ways of interpreting the posterior - through tables of numbers or plotting simulations from the posterior. Very hard to interpret from numbers alone when the model is complex (e.g. when interaction terms and polynomials are added). May not even be possible to guess the direction of influence a predictor has on an outcome.
+
+**Always plot posterior distributions and posterior predictions**
+
+### *4.4.3.1 Tables of marginal distributions*
+
+```{r}
+precis(m4.3)
+```
+
+This table shows the marginal posterior distributions of the parameters $\alpha, \beta$ and $\sigma$.
+
+*Interpretation:*
+
+$\beta$ - beta is the slope with value 0.90. What this tells us is that a person 1kg heavier is expected to be 0.9cm taller. 89% of the posterior probability is between 0.84 and 0.97. This tells us that the $\beta$ close to 0 or 1 is highly incompatible with our data + model. This does not mean that the relationship is linear (after all the model only considered lines) but if we commit to a linear model then then lines with a slope around 0.90 would be most plausible.
+
+The numbers in the *precis* table show only the marginals. They are not sufficient to describe the multidimensional posterior of our model - remember there are 3 parameters here, we know the posterior of each of them when the other ones are fixed (i.e. the marginals) but not how they correlate. We also need the **variance-covariance matrix** for that.
+
+```{r}
+vcov(m4.3)
+```
+
+```{r}
+round(vcov(m4.3), 3)
+```
+
+Very little covariance between the parameters.
+
+------------------------------------------------------------------------
+
+The ***pairs*** function shows us both the marginal distribution and the scatterplot + covariance of the parameters
+
+```{r}
+pairs(m4.3)
+```
+
+------------------------------------------------------------------------
+
+### ***4.4.3.2 Plotting posterior inference against the data***
+
+We'll add more and more information in the prediction plots until we've used all the information from the posterior distribution.
+
+We start with using just the means of the parameters (the classic one line fit to the data we see everywhere when they talk about linear models)
+
+```{r}
+plot(height ~ weight, data=d2, col=rangi2)
+post <- extract.samples(m4.3) # extracts samples from the posterior of a, b and sigma
+a_map <- mean(post$a) # a_map - a maximum a posteriori
+b_map <- mean(post$b)
+curve(a_map + b_map*(x - xbar), add=TRUE)
+```
+
+This line looks highly plausible but there are infinitely many highly plausible lines near it.
+
+### ***4.4.3.3 Adding uncertainty around the mean***
+
+The line above is just the posterior mean. It doesn't represent the whole posterior distribution of the parameters. There are infinitely many combinations of $\alpha$ and $\beta$ (i.e. lines) that the posterior distribution covers. Any value of the parameters (and their combination) has a probability. It might be that the distribution is very spread out with heavy tails, or narrow around the average line.
+
+```{r}
+post <- extract.samples(m4.3)
+```
+
+```{r}
+post[1:5,]  # first 5 lines
+```
+
+Let's include the data little by little to see how that affects the confidence in the model (the scatter of plausible lines around the average line)
+
+**10 samples**
+
+```{r}
+N <- 10
+dN <- d2[ 1:N , ]
+mN <- quap(
+    alist(
+        height ~ dnorm( mu , sigma ) ,
+        mu <- a + b*( weight - mean(weight) ) ,
+        a ~ dnorm( 178 , 20 ) ,
+        b ~ dlnorm( 0 , 1 ) ,
+        sigma ~ dunif( 0 , 50 )
+    ) , data=dN )
+```
+
+```{r}
+# extract 20 samples from the posterior
+post <- extract.samples( mN , n=20 )
+
+# display raw data and sample size
+plot( dN$weight , dN$height ,
+    xlim=range(d2$weight) , ylim=range(d2$height) ,
+    col=rangi2 , xlab="weight" , ylab="height" )
+mtext(concat("N = ",N))
+
+# plot the lines, with transparency
+for ( i in 1:20 )
+    curve( post$a[i] + post$b[i]*(x-mean(dN$weight)) ,
+        col=col.alpha("black",0.3) , add=TRUE )
+```
+
+**50 samples**
+
+```{r}
+N <- 50
+dN <- d2[ 1:N , ]
+mN <- quap(
+    alist(
+        height ~ dnorm( mu , sigma ) ,
+        mu <- a + b*( weight - mean(weight) ) ,
+        a ~ dnorm( 178 , 20 ) ,
+        b ~ dlnorm( 0 , 1 ) ,
+        sigma ~ dunif( 0 , 50 )
+    ) , data=dN )
+```
+
+```{r}
+# extract 20 samples from the posterior
+post <- extract.samples( mN , n=20 )
+
+# display raw data and sample size
+plot( dN$weight , dN$height ,
+    xlim=range(d2$weight) , ylim=range(d2$height) ,
+    col=rangi2 , xlab="weight" , ylab="height" )
+mtext(concat("N = ",N))
+
+# plot the lines, with transparency
+for ( i in 1:20 )
+    curve( post$a[i] + post$b[i]*(x-mean(dN$weight)) ,
+        col=col.alpha("black",0.3) , add=TRUE )
+```
+
+**150 samples**
+
+```{r}
+N <- 150
+dN <- d2[ 1:N , ]
+mN <- quap(
+    alist(
+        height ~ dnorm( mu , sigma ) ,
+        mu <- a + b*( weight - mean(weight) ) ,
+        a ~ dnorm( 178 , 20 ) ,
+        b ~ dlnorm( 0 , 1 ) ,
+        sigma ~ dunif( 0 , 50 )
+    ) , data=dN )
+```
+
+```{r}
+# extract 20 samples from the posterior
+post <- extract.samples( mN , n=20 )
+
+# display raw data and sample size
+plot( dN$weight , dN$height ,
+    xlim=range(d2$weight) , ylim=range(d2$height) ,
+    col=rangi2 , xlab="weight" , ylab="height" )
+mtext(concat("N = ",N))
+
+# plot the lines, with transparency
+for ( i in 1:20 )
+    curve( post$a[i] + post$b[i]*(x-mean(dN$weight)) ,
+        col=col.alpha("black",0.3) , add=TRUE )
+```
+
+**All samples**
+
+```{r}
+dN <- d2
+mN <- quap(
+    alist(
+        height ~ dnorm( mu , sigma ) ,
+        mu <- a + b*( weight - mean(weight) ) ,
+        a ~ dnorm( 178 , 20 ) ,
+        b ~ dlnorm( 0 , 1 ) ,
+        sigma ~ dunif( 0 , 50 )
+    ) , data=dN )
+```
+
+```{r}
+# extract 20 samples from the posterior
+post <- extract.samples( m4.3 , n=20 )
+
+# display raw data and sample size
+plot( d2$weight , d2$height ,
+    xlim=range(d2$weight) , ylim=range(d2$height) ,
+    col=rangi2 , xlab="weight" , ylab="height" )
+mtext("N = 352")
+
+# plot the lines, with transparency
+for ( i in 1:20 )
+    curve( post$a[i] + post$b[i]*(x-mean(d2$weight)) ,
+        col=col.alpha("black",0.3) , add=TRUE )
+```
+
+### ***4.4.3.4 Plotting regression intervals and contours***
+
+The cloud of regression lines is intuitive. But it's common and much clearer to display the uncertainty as an interval or contour around the average regression line.
+
+Focus on weight 50 kg and get a list of 10,000 individuals' height ($\mu$) who weigh 50kg sampled from the posterior.
+
+```{r}
+post <- extract.samples(m4.3, n=10000)
+
+mu_at_50 <- post$a + post$b*(50 - xbar)
+```
+
+Since the components of $\mu$ have distributions, so too does $\mu$. And since the distributions of $\alpha$ and $\beta$ are Gaussian, so too is the distribution of $\mu$.
+
+```{r}
+dens(mu_at_50, col=rangi2, lwd=2, xlab='mu|weight=50')
+```
+
+Find the 89% compatibility interval of $\mu$ at 50kg.
+
+```{r}
+PI(mu_at_50, prob=.89)
+```
+
+What this means is that the central 89% of the ways for the model to produce the data place the average height for an individual weighing 50kg between 159 and 160cm (***conditional on the model and the data***).
+
+To get the contour we need to do that for every weight. We do that with ***link**.*
+
+```{r}
+mu <- link(m4.3)
+```
+
+What *link* does is to compute the same values for each weight from the data using 1,000 samples from the posterior distribution. (matrix 1000x352)
+
+```{r}
+str(mu)
+```
+
+This covers all the weights in our data. To get [all the weights on the x-axis]{.underline} to plot the contour we do the following:
+
+```{r}
+weight.seq <- seq(from=25, to=70, by=1)
+```
+
+```{r}
+mu <- link(m4.3, data=data.frame(weight=weight.seq))
+str(mu)
+```
+
+At each weight we got a pile of sampled $\mu$s from the posterior distribution. Each of those piles has a Gaussian distribution. This is what we expect considering our model definition is
+
+$\mu_i = \alpha + \beta(x_i - \bar{x})$ **[linear model]**
+
+$\alpha \sim Normal(178, 20)$ [$\alpha$ prior] (2)
+
+$\beta \sim Normal(0, 10)$ [$\beta$ prior]
+
+$\mu$ **is a sum of normally distributed random variables and is also normally-distributed**
+
+```{r}
+plot(height ~ weight, d2, type="n")  # type "n" hides the raw data
+
+# loop over samples and plot each mu value
+for(i in 1:1000) {
+  points(weight.seq, mu[i, ], pch=16, col=col.alpha(rangi2, 0.1))
+}
+```
+
+Note that the uncertainty is smaller around the \~150cm range. The reason is that there is more data in that height range, increasing the confidence of our model.
+
+Next we summarize the distribution for each weight value.
+
+```{r}
+mu.mean <- apply(mu, 2, mean) # compute the mean of each column (dimenson "2") of the matrix mu
+mu.PI <- apply(mu, 2, PI, prob=0.89) # compute the 89% compatibility interval of each column (dimenson "2") of the matrix mu
+```
+
+Again, these summaries are just summaries. The estimate is the whole posterior distribution.
+
+Now we plot the MAP line - the mean $\mu$ for each weight, the 89% compatibility interval, and raw data together.
+
+```{r}
+# plot raw data
+# fading out points to make line and interval more visible
+plot( height ~ weight , data=d2 , col=col.alpha(rangi2,0.5) )
+
+# plot the MAP line, aka the mean mu for each weight
+lines( weight.seq , mu.mean )
+
+# plot a shaded region for 89% PI
+shade( mu.PI , weight.seq )
+```
+
+To summarize this is the recipe for generating predictions and intervals from the posterior of a fit model:
+
+1.  Use ***link*** to generate distributions of posterior values of $\mu$.
+
+2.  Use summary functions like ***mean*** or ***PI*** to find averages and lower/upper bounds of $\mu$ for each value of the predictor variable
+
+3.  Use plotting functions like ***lines*** and ***shade*** to draw the lines and intervals.
+
+### ***4.4.3.5 Prediction intervals***
+
+**What we've achieved here is generating the 89% compatibility interval of the AVERAGE height** $\mu$. **Now we need to generate the 89% prediction interval of ACTUAL heights.**
+
+What's the difference?
+
+$h_i \sim Normal(\mu_i, \sigma)$
+
+We need to incorporate the standard deviation $\sigma$ and its uncertainty.
+
+```{r}
+sim.height <- sim(m4.3, data=list(weight=weight.seq))
+str(sim.height)
+```
+
+```{r}
+height.PI <- apply(sim.height, 2, PI, prob=.89)
+```
+
+The small shaded region is the 89% plausible region of $\mu$ the average height. The big shaded region is the 89% plausible region of actual heights, incorporating the uncertainty of $\sigma$ - the standard deviation of the height.
+
+```{r}
+# plot raw data
+plot( height ~ weight , d2 , col=col.alpha(rangi2,0.5) )
+
+# draw MAP line
+lines( weight.seq , mu.mean )
+
+# draw PI region for line
+shade( mu.PI , weight.seq )
+
+# draw PI region for simulated heights
+shade( height.PI , weight.seq )
+```
+
+Here we have both uncertainty in parameter values (the uncertainty around $\mu$ - **posterior distribution**) and uncertainty in a sampling process (the uncertainty in the actual heights - **posterior predictive distribution**)
+
+------------------------------------------------------------------------
+
+## Understanding Posterior Distribution vs. Posterior Predictive Distribution
+
+In Bayesian statistics, both the posterior distribution and the posterior predictive distribution are crucial, but they serve different purposes. Here's a breakdown of each:
+
+### Posterior Distribution
+
+-   **Definition**: The posterior distribution represents the updated beliefs about the parameters of a model after observing the data. It combines the prior distribution (which reflects beliefs before seeing the data) with the likelihood of the observed data given the parameters.
+
+-   **Mathematical Expression**: Let $\theta$ denote the parameters and $X$ denote the observed data. The posterior distribution is given by: $$
+    P(\theta \mid X) = \frac{P(X \mid \theta) \cdot P(\theta)}{P(X)}
+    $$ where:
+
+    -   $P(X \mid \theta)$ is the likelihood,
+    -   $P(\theta)$ is the prior,
+    -   $P(X)$ is the marginal likelihood or evidence.
+
+-   **Purpose**: It provides a distribution over the parameter space, offering insight into which parameter values are plausible given the observed data.
+
+### Posterior Predictive Distribution
+
+-   **Definition**: The posterior predictive distribution describes the distribution of a new, future observation based on the observed data and the posterior distribution of the parameters. It tells us what to expect for new data points given the model and the data already seen.
+
+-   **Mathematical Expression**: Let $X_{\text{new}}$ denote a new observation. The posterior predictive distribution is: $$
+    P(X_{\text{new}} \mid X) = \int P(X_{\text{new}} \mid \theta) \cdot P(\theta \mid X) \, d\theta
+    $$ where:
+
+    -   $P(X_{\text{new}} \mid \theta)$ is the likelihood of the new data given the parameters.
+
+-   **Purpose**: It provides a distribution over possible future observations, integrating over the uncertainty in the parameters. This helps in making predictions about new data or assessing model performance.
+
+### Summary
+
+-   The **posterior distribution** focuses on the uncertainty of model parameters given the data.
+-   The **posterior predictive distribution** focuses on predicting new data points, integrating over the uncertainty in the parameters.
+
+Both distributions are central to Bayesian inference, serving distinct roles: one for understanding parameter estimates and uncertainty, and the other for making predictions about future observations.
+
+------------------------------------------------------------------------
+
+There are two kinds of uncertainty here
+
+-   The Gaussian likelihood, the posterior distribution, is a purely epistemological assumption (a device for estimating the mean and variance of a variable)
+
+<!-- -->
+
+-   The distribution of simulated outcomes like height, the posterior predictive distribution, the sampling variation, is an ontological assumption. Our model expects future data to be Gaussian-distributed.

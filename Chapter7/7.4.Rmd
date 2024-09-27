@@ -1,0 +1,159 @@
+# 7.4 Predicting predictive accuracy
+
+The previous sections suggest one way to navigate overfitting/underfitting - evaluate our models out-of-sample.
+
+Where do we get this out-of-sample?
+
+There are two strategies - **cross-validation** or **information criteria**.
+
+## 7.4.1 Cross-validation
+
+A popular strategy for estimating predictive accuracy is to actually test the model's predictive accuracy on another sample. This is known as **cross-validation**, leaving out a small chunk of observations from our sample and evaluating the model on the observations that are left out.
+
+We chunk the data into folds. Use one of the folds to estimate accuracy and then move on to a different out-of-sample fold. In the end average the accuracy from all folds.
+
+**cv_quap** - performs cross-validation on *quap* models.
+
+How many folds are preferred? **Leave-one-out cross-validation (LOOCV)** is what is used here by default. It is more computationally expensive but the best approximation of out-of-sample performance.
+
+There are clever ways to approximate the CV score without actually running the model over and over. One approach is using the "importance" of each observation to the posterior distribution. Some observations are more "important" - they have a higher impact on the shape of the posterior than others. This "importance" is known as observation *weight*.
+
+This weight is used in a strategy for approximating CV score known as **Pareto-smoothed importance sampling cross validation**. Also known as **PSIS**.
+
+**PSIS** also reports its own reliability by noting observations with very high weights that could make PSIS inaccurate.
+
+Another feature of PSIS is that it provides an approximate (sometimes too approximate) estimate of the standard error of the out-of-sample deviance.
+
+To compute this standard error, we calculate the CV or PSIS score for each observation and then use the central limit theorem to provide a measure of the standard error.
+
+$$
+s_{PSIS} = \sqrt{N\space var(psis_i)}
+$$
+
+where N is the number of observations and $psis_i$ is the PSIS estimate for observations $i$.
+
+## 7.4.2 Information criteria
+
+The second approach is to use **information criteria** to compute an expected score out of sample. Information criteria construct a theoretical estimate of the relative out-of-sample KL divergence.
+
+A curious finding in machine learning is that the difference is that the distance between the train and test deviance pairs is approximately twice the number of parameters in each model. *Look at Figure 7.8 and page 219 to clarify.* It turns out that for ordinary linear regressions with flat priors, the expected overfitting penalty is about twice the number of parameters.
+
+This is the phenomenon behind information criteria.
+
+The best known information criteria is **Akaike information criteria (AIC)**. AIC estimates the out-of-sample deviance as:
+
+$$
+AIC = D_{train} + 2p = -2lppd + 2p
+$$
+
+where $p$ is the number of free parameters in the posterior distribution. As the 2 is just there for scaling, what AIC tells us is that the dimensionality of the posterior distribution is a natural measure of the model's overfitting tendency. More complex models overfit more, in proportion to the number of parameters.
+
+AIC is only reliable when:
+
+-   the priors are flat or overwhelmed by the likelihood
+
+-   the posterior is approximately Gaussian
+
+-   sample size $N$ is much grater than the number of parameters $k$
+
+Since flat priors are rarely optimal, other ICs are preferred. For multilevel models priors are never flat by definition.
+
+**Widely applicable information criteria (WAIC)** makes no assumptions about the shape of the posterior. It provides an out-of-sample deviance that converges to the CV approximation in a large sample. In a finite sample, they can be different. Because it has a different target. It's not approximating CV score but guessing the out-of-sample KL divergence (includes $p_i$ that we excluded in the definition of the model score $S(i)$ in section 7.3, i.e. it tries to make a guess about the outcome probabilities of the true generating process).
+
+How do we compute WAIC? It is just the log-posterior-predictive density lppd plus a penalty proportional to the variance in the posterior predictions:
+
+$$
+WAIC(y, \Theta) = -2\big(lppd - \underbrace{\sum_{i}{var_\Theta log\space p(y | \Theta)}}_{\text{penalty term}}\big)
+$$
+
+where $y$ is the observations and $\Theta$ is the posterior distribution. The penalty term just means "compute the variance in log-probabilities for each observation $i$, and then sum up these variances to get the total penalty".
+
+Because of its analogy to AIC (where the penalty is simply $-2p$ the number of parameters), the penalty term in WAIC is often called the **effective number of parameters** $p_{WAIC}$. This is not true mathematically and is there for historical reasons. It is better thought of as "the overfitting penalty".
+
+Like PSIS, WAIC is pointwise. Therefore:
+
+-   has an approximate standard error
+
+-   assigns "importance" to observations
+
+-   in cases where the observations are not independent, like in time series, its meaning is hard to define. Same with CV.
+
+**Rethinking: Information criteria and consistency**
+
+ICs like AIC and WAIC don't always assign the best expected $D_{test}$ to the "true" model. They often improve when more parameters are added and lead to overfitting. They are not **consistent** for model identification. Issues like consistency are evaluated *asymptotically,* i.e. as the amount of data approaches infinity ($N \to  \infty$). With so much data the most complex model gives the best prediction because parameters can be approximated with very high precision, therefore overfitting stops being an issue. The extra parameters will be almost exactly zero.
+
+[**Calculating WAIC**]{.underline}
+
+1.  Fit model and extract samples from the posterior
+
+```{r}
+library(rethinking)
+data(cars)
+m <- quap(
+  alist(
+    dist ~ dnorm(mu,sigma),
+    mu <- a + b*speed,
+    a ~ dnorm(0, 100),
+    b ~ dnorm(0, 10),
+    sigma ~ dexp(1)
+  ),
+data = cars)
+
+set.seed(94)
+post <- extract.samples(m, n=1000)
+```
+
+2.  Log-likelihood of each observation $i$ at each sample $s$ from the posterior
+
+```{r}
+n_samples <- 1000
+
+logprob <- sapply(1:n_samples, 
+                  function(s) {
+                    mu <- post$a[s] + post$b[s] * cars$speed
+                    dnorm(cars$dist, mu, post$sigma[s], log=TRUE)
+                  })
+```
+
+We end up with 50x1000 matrix of log-likelihoods, with observations as rows and samples as columns.
+
+3.  Now to compute lppd, the Bayesian deviance, we average the samples in each row, take the log, and add all of the logs together.
+
+```{r}
+n_cases <- nrow(cars)
+
+lppd <- sapply(1:n_cases, function(i) log_sum_exp(logprob[i, ]) - log(n_samples))
+```
+
+sum(lppd) would give lppd as defined in the text.
+
+4.  Now the penalty term $p_{WAIC}$
+
+```{r}
+pWAIC <- sapply(1:n_cases, function(i) var(logprob[i, ]))
+```
+
+sum(pWAIC) would give $p_{WAIC}$ as defined in the text.
+
+5.  Computing WAIC
+
+```{r}
+-2 * (sum(lppd) - sum(pWAIC))
+```
+
+```{r}
+WAIC(m)
+```
+
+Computing the standard error from the manual WAIC we did
+
+```{r}
+waic_vec <- -2 * (lppd - pWAIC)
+sqrt(n_cases * var(waic_vec))
+```
+
+## 7.4.3 Comparing CV, PSIS, and WAIC
+
+Watanabe (the one that came up with WAIC) recommends using both WAIC and PSIS and comparing them. If their estimates are very different, this implies that one or both criteria are unreliable.
+
+PSIS has a distinct advantage in warning the user about when it is unreliable. The $k$ values that PSIS computers for each observation indicate that the PSIS are unreliable as well as identify which observations are at fault.

@@ -1,0 +1,195 @@
+# 6.1 Multicolinearity
+
+## 6.1.1 Multicolinear legs
+
+```{r}
+N <- 100                          # number of individuals
+set.seed(909)
+height <- rnorm(N,10,2)           # sim total height of each
+leg_prop <- runif(N,0.4,0.5)      # leg as proportion of height
+leg_left <- leg_prop*height +     # sim left leg as proportion + error
+    rnorm( N , 0 , 0.02 )
+leg_right <- leg_prop*height +    # sim right leg as proportion + error
+    rnorm( N , 0 , 0.02 )
+                                  # combine into data frame
+d <- data.frame(height,leg_left,leg_right)
+```
+
+l = 0.45 x h
+
+h = b x l
+
+h = b x 0.45xh
+
+10 = b x 0.45 x 10
+
+b = 1/0.45 = 10/4.5 = 2.2
+
+```{r}
+
+m6.1 <- quap(
+    alist(
+        height ~ dnorm( mu , sigma ) ,
+        mu <- a + bl*leg_left + br*leg_right ,
+        a ~ dnorm( 10 , 100 ) ,
+        bl ~ dnorm( 2 , 10 ) ,
+        br ~ dnorm( 2 , 10 ) ,
+        sigma ~ dexp( 1 )
+    ) , data=d )
+precis(m6.1)
+
+```
+
+```{r}
+plot(precis(m6.1))
+```
+
+```{r}
+post <- extract.samples(m6.1)
+plot(bl ~ br, data=post, col=col.alpha(rangi2,0.1) , pch=16 )
+```
+
+We can see that the higher bl is the lower br is and vice versa. The reason is that leg_left and leg_right are basically the same variable. So from the model's perspective it's approximating
+
+$y_i \sim Normal(\mu_i, \sigma) \\
+\mu_i = \alpha + \beta_lx_i + \beta_rx_i$
+
+which is equivalent to $\mu_i = \alpha + (\beta_l + \beta_r)x_i$
+
+So the model correctly approximated their sum $(\beta_l + \beta_r)$ but there are infinite number of combinations of $\beta_l$ and $\beta_r$ that sum up to 2.2. We can see that this sum is correctly approximated.
+
+```{r}
+sum_blbr <- post$bl + post$br
+dens( sum_blbr , col=rangi2 , lwd=2 , xlab="sum of bl and br" )
+```
+
+```{r}
+sd(sum_blbr)
+```
+
+We can also see that the standard deviation of their sum is much smaller than it is for either component.
+
+If we model just one of the leg's lengths we'll approximate the same posterior mean
+
+```{r}
+m6.2 <- quap(
+  alist(
+    height ~ dnorm( mu , sigma),
+    mu <- a + bl*leg_left,
+    a ~ dnorm( 10 , 100 ),
+    bl ~ dnorm( 2 , 10 ),
+    sigma ~ dexp( 1 )
+), data=d)
+precis(m6.2)
+```
+
+The lesson is: When two predictor variables are very strongly correlated, including both in a model can lead to confusion.
+
+## 6.1.2 Multicollinear milk
+
+The example with height and legs is very simple and silly and just here for illustration purposes.
+The problem arises in real data sets when we don't anticipate a clash between highly correlated variables.
+We may mistakenly read the posterior distribution as neither of the predictors is important.
+
+
+Let's look at a real example from the primate milk dataset:
+```{r}
+library(rethinking)
+data(milk)
+d <- milk
+```
+
+```{r}
+d$K <- standardize(d$kcal.per.g)
+d$L <- standardize(d$perc.lactose)
+d$F <- standardize(d$perc.fat)
+```
+
+Let's start with two bivariate regressions
+```{r}
+# kcal/g regressed on % fat
+m6.3 <- quap(
+  alist(
+    K ~ dnorm(mu, sigma),
+    mu <- a + bF*F,
+    a ~ dnorm(0, 0.2),
+    bF ~ dnorm(0, 0.5),
+    sigma ~ dexp(1)
+  )
+, data=d)
+
+# kcal/g regressed on % lactose
+m6.4 <- quap(
+  alist(
+    K ~ dnorm(mu, sigma),
+    mu <- a + bL*L,
+    a ~ dnorm(0, 0.2),
+    bL ~ dnorm(0, 0.5),
+    sigma ~ dexp(1)
+  )
+, data=d)
+```
+
+```{r}
+precis( m6.3 )
+```
+
+```{r}
+precis( m6.4 )
+```
+
+The posterior distributions of bL and bF are essentially mirror images of each other. The posterior mean of bF is as positive as bL is negative.
+Both are narrow (small standard deviation) and lie on opposite sides of 0.
+
+What happens when we include both?
+
+```{r}
+m6.5 <- quap(
+  alist(
+    K ~ dnorm(mu, sigma),
+    mu <- a + bF*F + bL * L,
+    a ~ dnorm(0, 0.2),
+    bF ~ dnorm(0, 0.5),
+    bL ~ dnorm(0, 0.5),
+    sigma ~ dexp(1)
+  )
+, data=d)
+```
+
+```{r}
+precis(m6.5)
+```
+
+Now both posterior means of bL and bF are closer to 0 and their standard deviation is more than double.
+What happens is that by including both the posterior describes a long ridge of combinations of bL and bF that are equaly plausible.
+
+In this case the two variables % lactose and % fat form essentially a single axis of variation. To see this we plot a pairs plot
+
+```{r}
+pairs( ~ kcal.per.g + perc.fat + perc.lactose , data=d , col=rangi2 )
+```
+
+There are many dodgy ways of dealing with multicollinearity. Some methods suggest inspecting the pairwise
+correlations of predictors before fitting the model and dropping highly correlated pairs but this is WRONG.
+**The pairwise correlations are not the problem, the conditional associations are!** And even then the right thing
+to do would depend on what is causing the collinearity.
+
+In the milk example, what is likely happening is that there is a core tradeoff in milk composition
+that mammal mothers must obey. The more often a species nurses, the more watery and lactose-rich
+the milk is, the less it nurses the more energy-rich the milk needs to be and the higher the fat content.
+
+This implies a causal model that includes a variable D - density. The central tradeoff decides how dense, D, the milk needs to be. We haven’t observed this
+variable, so it’s shown circled. Then fat, F, and lactose, L, are determined. Finally, the com-
+position of F and L determines the kilocalories, K. If we could measure D, or had an evolu-
+tionary and economic model to predict it based upon other aspects of a species, that would
+be better than stumbling through regressions.
+
+The problem of multicollinearity is a member of a family of problems with fitting models - **non-identifiability**.
+When a parameter is non-indentifiable it means that the structure of the data and model don't make it possible to estimate
+the parameter's value. In such cases the Bayesian model wouldn't improve much on the prior. So comparing the prior and posterior
+to see how much information the model has extracted could be a good approach.
+
+**When the prior and posterior are similar it doesn't mean that the calculations are wrong - you got the answer to the question
+you asked. But it might lead you to ask better questions.**
+
+

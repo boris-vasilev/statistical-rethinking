@@ -1,0 +1,249 @@
+---
+editor_options: 
+  markdown: 
+    wrap: sentence
+---
+
+# 6.2 Post-treatment bias
+
+**Omitted variable bias** - you skip a variable and that impacts the model.
+The masked relationship and spurious correlation (from chapter 5) are such examples **Included variable bias**
+
+\*Post-treatment bias\*\* is a type of included variable bias.
+Plants are treated with anti-fungal to increase their height.
+Fungus is known to reduce height.
+The variables are initial height, treatment, presence of fungus, and final height.
+The outcome of interest is final height.
+Which of the other variables should be in the model?
+To make causal inference about the treatment - *you shouldn't include the fungus because it is a post-treatment effect*.
+
+**It is risky to condition on post-treatment variables**
+
+```{r}
+library(rethinking)
+set.seed(71)
+# number of plants
+N <- 100
+ 
+# simulate initial heights
+
+h0 <- rnorm(N, 10, 2)
+
+# assign treatment and simulate fungus and growth
+
+treatment <- rep(0:1, each=N/2)
+fungus <- rbinom(N, size=1, prob=0.5 - treatment * 0.4) # 50% chance of having fungus w/o treatment, 50-40=10% with treatment
+h1 <- h0 + rnorm(N, 5-3*fungus) # growth with mean 5 if fungus, 2 otherwise
+
+# compose a clean data frame
+
+d <- data.frame(h0=h0, h1=h1, treatment=treatment, fungus=fungus)
+precis(d)
+```
+
+Pre-treatment variables can also create bias
+
+## 6.2.1 A prior is born
+
+We know that plants at time t=1 will be taller than at t=0.
+So if we put the parameters on a scale of *proportion* of height at time t=0 tather than on the absolute scale of the data, we can set the priors more easily.
+Let's focus on the height variables ignoring the predictor variables.
+
+We might have a linear model like:
+
+$h_{1,i} \sim Normal(\mu_i, \sigma) \\ \mu_i = h_{0, i} \times p$
+
+if p = 1 the plant hasn't grown at all.
+if p=2 it has doubled.
+So if we center our prior at p=1 we expect the plant to not grow.
+We should allow p to be less than 1 in case the experiment goes horribly wrong and we kill all plants.
+We also have to keep p \> 0 because it is a proportion.
+
+The Log-Normal from chapter 4 is always positive.
+
+$p \sim \text{Log-Normal}(0, 0.25)$
+
+```{r}
+sim_p <- rlnorm(1e4, 0, 0.25)
+precis(data.frame(sim_p))
+```
+
+So with this prior the model expects anything from 33% shrinkage to 50% growth (5.5% to 94.5%, the 90% PI).
+
+```{r}
+m6.6 <- quap(
+  alist(
+    h1 ~ dnorm(mu, sigma),
+    mu <- h0 * p,
+    p ~ dlnorm(0,0.25),
+    sigma ~ dexp(1)
+  ),
+data=d)
+precis(m6.6)
+```
+
+About 40% growth on average.
+
+Now to include treatment and fungus.
+
+We include both because we'd like to measure the impact of both the treatment and the fungus itself.
+
+The parameters for these will also be on the proportion scale.
+
+$h_{1, i} \sim Normal(\mu_i, \sigma) \\
+\mu_i = h_{0, i} \times p \\
+p = \alpha + \beta_T T_i + \beta_F F_i \\
+\alpha \sim \text{Log-Normal}(0, 0.25) \\
+\beta_T \sim Normal(0, 0.5) \\
+\beta_F \sim Normal(0, 0.5) \\
+\sigma \sim Exponential(1)$
+
+The proportion p is now a function of the predictor variables.
+Looks like any other liner model.
+
+The priors are most certainly too flat because they place 95% of the prior mass between -1 (100% shrink) and 1 (100% grow) and 2/3 of the prior mass between -0.5 and 0.5.
+
+```{r}
+m6.7 <- quap(
+  alist(
+    h1 ~ dnorm(mu, sigma),
+    mu <- h0*p,
+    p <- a + bt*treatment + bf*fungus,
+    a ~ dlnorm(0, 0.25),
+    bt ~ dnorm(0, 0.5),
+    bf ~ dnorm(0, 0.5),
+    sigma ~ dexp(1)
+  ),
+data=d)
+precis(m6.7)
+```
+
+The parameter a is the same as p before and has nearly the same posterior.
+The marginal posterior bt is 0 with a very tight interval.
+The treatment is not associated with growth.
+Fungus reduces growth.
+
+But we know that treatment matters because we built the generating process that way.
+
+## 6.2.2 Blocked by consequence
+
+The problem is that fungus is mostly a consequence of treatment.
+Fungus is a post-treatment variable.
+
+So when we condition on fugus the model is answering the question: *Once we know whether a plant developed fungus, does soil treatment matter?* And the answer is NO, because treatment has its effects on growth through reducing fungus.
+
+What we actually want to know is the impact of treatment on growth.
+
+To measure this properly we omit the post-treatment variable fungus.
+
+```{r}
+m6.8 <- quap(
+  alist(
+    h1 ~ dnorm(mu, sigma),
+    mu <- h0*p,
+    p <- a + bt*treatment,
+    a ~ dlnorm(0, 0.25),
+    bt ~ dnorm(0, 0.5),
+    sigma ~ dexp(1)
+  ),
+data=d)
+precis(m6.8)
+```
+
+Now we see that there is a clear positive effect of the treatment.
+(90% of the mass lying between 3% and 14%)
+
+It makes sense to control for pre-treatment differences like initial height which might mask the causal influence of treatment.
+But including post-treatment variables such as fungus might actually mask the treatment itself.
+
+This is not to say that the multivariate model is useless.
+It tells us about the mechanism.
+The treatment affects growth through the influence on fungus (through mediation)
+
+## 6.2.3 Fungus and d-separation
+
+```{r}
+library(dagitty)
+plant_dag <- dagitty("dag{
+                     H_0 -> H_1
+                     F -> H_1
+                     T -> F
+}")
+
+coordinates( plant_dag ) <- list( x=c(H_0=0,T=2,F=1.5,H_1=1) ,
+                                  y=c(H_0=0,T=0,F=0,H_1=0) )
+drawdag( plant_dag )
+```
+
+What the DAG tells us that when we include F, the post-treatment effect, we end up blocking the path from T to H_1.
+The DAG tells us that learning treatment tells us nothing about growth once we know the fungus status.
+
+**Conditioning of F induces [*D-separation*]{.underline}.** The D stands for directional (or dependency)
+
+What this means is that there is no direct path connecting T and H_1 when we add F.
+If we omit F, i.e. if we don't condition on F, there will be a path connecting T and H_1.
+Conditioning on F blocks this direct path.
+
+H_1 and T are also **conditionally independent** on F.
+Once we know F, T doesn't add any information.
+
+```{r}
+impliedConditionalIndependencies(plant_dag)
+```
+
+Conditioning on a post-treatment variable can fool us into thinking that the treatment doesn't work.
+It can also fool us into thinking that it DOES work.
+
+What if T influences F, but F doesn't influence growth.
+There is another unobserved variable M - moisture that influences both fungus and growth.
+Then when we do a bivariate regression of H_1 on T it will show no association between treatment and growth.
+
+But if we include F, there is an association.
+
+```{r}
+set.seed(71)
+N <- 1000
+h0 <- rnorm(N, 10, 2)
+treatment <- rep(0:1, each=N/2)
+M <- rbern(N)
+fungus <- rbinom(N, size=1, prob=0.5 - treatment * 0.4 + 0.4*M)
+h1 <- h0 + rnorm(N, 5+3*M)
+d2 <- data.frame(h0=h0, h1=h1, treatment=treatment, fungus=fungus)
+```
+
+```{r}
+m6.7 <- quap(
+  alist(
+    h1 ~ dnorm(mu, sigma),
+    mu <- h0*p,
+    p <- a + bt*treatment + bf*fungus,
+    a ~ dlnorm(0, 0.25),
+    bt ~ dnorm(0, 0.5),
+    bf ~ dnorm(0, 0.5),
+    sigma ~ dexp(1)
+  ),
+data=d2)
+precis(m6.7)
+```
+
+Now we see association when F is also included.
+
+And when it's removed:
+
+```{r}
+m6.8 <- quap(
+  alist(
+    h1 ~ dnorm(mu, sigma),
+    mu <- h0*p,
+    p <- a + bt*treatment,
+    a ~ dlnorm(0, 0.25),
+    bt ~ dnorm(0, 0.5),
+    sigma ~ dexp(1)
+  ),
+data=d2)
+precis(m6.8)
+```
+
+We see that there is actually no association if we don't include F.
+
+Fungus again confounds inference about treatment, but this time by making it seem like there is association, even though there is no effect.

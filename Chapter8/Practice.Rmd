@@ -1,0 +1,526 @@
+# 8E1
+
+1.  Presence of oxygen, temperature, moisture
+2.  Student IQ
+3.  A categorical variable : electric/gasoline-powered
+
+# 8M1
+
+Temperature interacted with water. In the hot greenhouse the high temperature evaporated the water from the soil, which caused no blooms.
+
+# 8M2
+
+Rescale $T_i$ to $T_i - 1$ that way $T_i$ would be 0 in cold and 1 in hot.
+
+$$
+\mu_i = \beta_TT_i
+$$
+
+# 8M4
+
+To make the slope of W strictly positive we'll exponentiate water
+
+```{r}
+library(rethinking)
+data("tulips")
+d <- tulips
+
+d$blooms_std <- d$blooms / max(d$blooms)
+d$water_cent <- d$water - mean(d$water)
+d$shade_cent <- d$shade - mean(d$shade)
+
+m8M4 <- quap(
+    alist(
+        blooms_std ~ dnorm( mu , sigma ) ,
+        mu <- a + bw*water_cent - bs*shade_cent - bws*water_cent*shade_cent ,
+        a ~ dnorm( 0.5 , 0.25 ) ,
+        bw ~ dlnorm( 0 , 0.25 ),
+        bs ~ dlnorm( 0 , 0.25 ),
+        bws ~ dlnorm( 0 , 0.25 ),
+        sigma ~ dexp( 1 )
+    ) , data=d )
+```
+
+```{r}
+set.seed(7)
+prior.m8M4 <- extract.prior(m8M4)
+
+par(mfrow=c(2,3)) # 3 plots in 2 row
+for ( s in -1:1 ) {
+    idx <- which( d$shade_cent==s )
+    plot( NULL , xlim=c(-1,1) , ylim=c(-1,2) ,
+        xlab="water" , ylab="blooms" , pch=16 , col=rangi2 )
+    mtext(paste("m8M4 prior: shade = ", s))
+    
+    abline(h=min(d$blooms_std), lty=2)  # minimum blooms
+    abline(h=max(d$blooms_std), lty=2)  # maximum blooms
+    
+    mu <- link( m8M4 , data=data.frame( shade_cent=s , water_cent=-1:1 ), post=prior.m8M4 )
+    for ( i in 1:20 ) lines( -1:1 , mu[i,] , col=col.alpha("black",0.3) )
+}
+
+for ( w in -1:1 ) {
+    idx <- which( d$water_cent==w )
+    plot( NULL , xlim=c(-1,1) , ylim=c(-1,2) ,
+        xlab="shade" , ylab="blooms" , pch=16 , col=rangi2 )
+    mtext(paste("m8M4 prior: water = ", w))
+    
+    abline(h=min(d$blooms_std), lty=2)  # minimum blooms
+    abline(h=max(d$blooms_std), lty=2)  # maximum blooms
+    
+    mu <- link( m8M4 , data=data.frame( water_cent=w , shade_cent=-1:1 ), post=prior.m8M4 )
+    for ( i in 1:20 ) lines( -1:1 , mu[i,] , col=col.alpha("black",0.3) )
+}
+```
+
+Changing Normal to Log-Normal distribution achieves this. For $\beta_S$ and $\beta_{WS}$ there is a difference in the linear model also to make their effect negative.
+
+$$
+\mu_i = \alpha + \beta_WW_i - \beta_SS_i - \beta_{WS}W_iS_i \\
+\alpha \sim \text{Normal}(0.5, 0.25)\\
+\beta_W \sim \text{Log-Normal}(0, 0.25)\\
+\beta_S \sim \text{Log-Normal}(0, 0.25)\\
+\beta_{WS} \sim \text{Log-Normal}(0, 0.25)\\
+\sigma \sim Exponential(1)
+$$
+
+# 8H1
+
+```{r}
+d$bed
+```
+
+```{r}
+levels(d$bed) <- c(1,2,3)
+d$bed <- as.numeric(d$bed)
+```
+
+```{r}
+m8H1 <- quap(
+    alist(
+        blooms_std ~ dnorm( mu , sigma ) ,
+        mu <- a[bed] + bbid[bed]*bed +  bw*water_cent + bs*shade_cent + bws*water_cent*shade_cent ,
+        a[bed] ~ dnorm( 0.5 , 0.25 ) ,
+        bbid[bed] ~ dnorm(0, 0.25),
+        bw ~ dnorm( 0 , 0.25 ),
+        bs ~ dnorm( 0 , 0.25 ),
+        bws ~ dnorm( 0 , 0.25 ),
+        sigma ~ dexp( 1 )
+    ) , data=d )
+```
+
+# 8H2
+
+Previous model
+
+```{r}
+m8.5 <- quap(
+    alist(
+        blooms_std ~ dnorm( mu , sigma ) ,
+        mu <- a + bw*water_cent + bs*shade_cent + bws*water_cent*shade_cent ,
+        a ~ dnorm( 0.5 , 0.25 ) ,
+        bw ~ dnorm( 0 , 0.25 ) ,
+        bs ~ dnorm( 0 , 0.25 ) ,
+        bws ~ dnorm( 0 , 0.25 ) ,
+        sigma ~ dexp( 1 )
+    ) , data=d )
+```
+
+```{r}
+compare(m8.5, m8H1)
+```
+
+Comparing the two with WAIC tells us that the new model overfits the data. The standard error of the difference is bigger than the difference dSE \> dWAIC so the two models have indistinguishable difference in predictive accuracy and the weight of the models is split between the two.
+
+```{r}
+precis(m8H1, depth = 2)
+```
+
+Looking at the parameters for $\beta_{BID[i]}$ ($BID[i]$ - bed ID) all 3 posterior distributions for bed are overlapping 0.
+
+```{r}
+plot(coeftab(m8H1), pars=c("bbid[1]", "bbid[2]", "bbid[3]"))
+```
+
+# 8H3
+
+```{r}
+data(rugged)
+d <- rugged
+
+# log transform GDP
+d$log_gdp <- log(d$rgdppc_2000)
+
+# extract countries with GDP data
+dd <- d[complete.cases(d$rgdppc_2000),]
+
+# rescale variables
+dd$log_gdp_std <- dd$log_gdp/mean(dd$log_gdp)
+dd$rugged_std <- dd$rugged/max(dd$rugged)
+
+dd$cid <- ifelse(dd$cont_africa==1, 1, 2)
+
+m8.3 <- quap(
+  alist(
+    log_gdp_std ~ dnorm(mu, sigma),
+    mu <- a[cid] + b[cid]*(rugged_std - 0.215),
+    a[cid] ~ dnorm(1, 0.1),
+    b[cid] ~ dnorm(0, 0.3),
+    sigma ~ dexp(1)
+  ),
+data = dd)
+```
+
+```{r}
+set.seed(7)
+m8.3_WAIC <- WAIC(m8.3, pointwise = T)$WAIC
+m8.3_PSISk <- PSIS(m8.3, pointwise=T)$k
+
+plot(m8.3_PSISk, m8.3_WAIC)
+```
+
+```{r}
+WAIC(m8.3)
+```
+
+(b) 
+
+```{r}
+m8H3 <- quap(
+  alist(
+    log_gdp_std ~ dstudent(2, mu, sigma),
+    mu <- a[cid] + b[cid]*(rugged_std - 0.215),
+    a[cid] ~ dnorm(1, 0.1),
+    b[cid] ~ dnorm(0, 0.3),
+    sigma ~ dexp(1)
+  ),
+data = dd)
+```
+
+```{r}
+set.seed(7)
+m8H3_WAIC <- WAIC(m8H3, pointwise = T)$WAIC
+m8H3_PSISk <- PSIS(m8H3, pointwise=T)$k
+
+plot(m8H3_PSISk, m8H3_WAIC)
+```
+
+# 8H4
+
+```{r}
+set.seed(7)
+data("nettle")
+d <- nettle
+
+
+d$lang.per.cap <- d$num.lang / d$k.pop  # languages per capita
+d$L <- log(d$lang.per.cap)  # log languages per capita
+d$A <- log(d$area)  # log area
+d$G_m <- d$mean.growing.season
+d$G_s <- d$sd.growing.season
+```
+
+Since we don't know anything about the scales of those variables, we'll standardize them to z-scores to reason about the direction of influence about the different variables without worrying about their scales.
+
+```{r}
+d$L_std <- standardize(d$L)
+d$A_std <- standardize(d$A)
+d$G_m_std <- standardize(d$G_m)
+d$G_s_std <- standardize(d$G_s)
+```
+
+Starting from a basic model of language diversity
+
+$$
+L_i \sim Normal(\mu, \sigma)\\
+\mu \sim Normal(0, 0.5) \\
+\sigma \sim Exponential(1)
+$$
+
+```{r}
+m0 <- quap(
+  alist(
+    L_std ~ dnorm(mu, sigma),
+    mu ~ dnorm(0, 0.5),
+    sigma ~ dexp(1)
+  ),
+data = d)
+```
+
+Then we'll add the average length of the growing season. Given that our hypothesis is that food security increases language diversity, it makes sense to keep its prior in the positive range. So we'll use a log-normal prior.
+
+$$
+L_i \sim Normal(\mu_i, \sigma)\\
+\mu_i = \alpha + \beta_{Gm}Gm_i \\
+\alpha \sim Normal(0, 0.5)\\
+\beta_{Gm} \sim \text{Log-Normal}(0, 0.5)\\
+\sigma \sim Exponential(1)
+$$\
+
+```{r}
+m.a1 <- quap(
+  alist(
+    L_std ~ dnorm(mu, sigma),
+    mu <- a + bG_m*G_m_std,
+    a ~ dnorm(0, 0.5),
+    bG_m ~ dlnorm(0, 0.5),
+    sigma ~ dexp(1)
+  ),
+data = d)
+```
+
+```{r}
+prior <- extract.prior(m.a1)
+
+mu <- link( m.a1 , data=data.frame(G_m_std=c(-2:2)), post=prior)
+
+plot(NULL, xlim=c(-2, 2), ylim=c(-2, 2),
+     xlab="G_m_std", ylab="L_std")
+mtext("Prior predictive distribution with log-normal G_m_std")
+for ( i in 1:50 ) lines( -2:2 , mu[i,] , col=col.alpha("black",0.3) )
+```
+
+The slopes are as expected only positive, which is what we want. Also, incredibly uninformative.
+
+Let's compare the two models.
+
+```{r}
+compare(m0, m.a1)
+```
+
+```{r}
+PSIS(m.a1)
+```
+
+Running PSIS it seems like there are observations with high Pareto k values so perhaps using a robust regression is reasonable here.
+
+Let's add the other predictors first.
+
+Next, we add log area. The same logic as for average growing season length applies here so I'm using a log-normal distribution.
+
+```{r}
+m.a2 <- quap(
+  alist(
+    L_std ~ dnorm(mu, sigma),
+    mu <- a + bG_m*G_m_std + bA*A_std,
+    a ~ dnorm(0, 0.5),
+    bG_m ~ dlnorm(0, 0.5),
+    bA ~ dlnorm(0, 0.5),
+    sigma ~ dexp(1)
+  ),
+data = d)
+```
+
+```{r}
+compare(m0, m.a1, m.a2)
+```
+
+Based on WAIC a1 is performing the best, but there isn't much of a difference between the three.
+
+```{r}
+compare(m0, m.a1, m.a2, func = PSIS)
+```
+
+Going back to the same issue there are high Pareto k values in PSIS.
+
+Let's resolve this.
+
+First let's plot WAIC and PSIS to see what are the highly influential nations.
+
+We'll work on the m.a1 model
+
+```{r}
+set.seed(7)
+m.a1_WAIC <- WAIC(m.a1, pointwise = T)$WAIC
+m.a1_PSIS <- PSIS(m.a1, pointwise = T)$k
+
+plot(m.a1_WAIC, m.a1_PSIS)
+abline(h=0.5, lty=2)
+```
+
+There are a few highly influential points. Especially visible in WAIC.
+
+Let's revise our models to use Student-t regression with $\nu = 2$.
+
+```{r}
+m0 <- quap(
+  alist(
+    L_std ~ dstudent(2, mu, sigma),
+    mu ~ dnorm(0, 0.5),
+    sigma ~ dexp(1)
+  ),
+data = d)
+
+m.a1 <- quap(
+  alist(
+    L_std ~ dstudent(2, mu, sigma),
+    mu <- a + bG_m*G_m_std,
+    a ~ dnorm(0, 0.5),
+    bG_m ~ dlnorm(0, 0.5),
+    sigma ~ dexp(1)
+  ),
+data = d)
+
+m.a2 <- quap(
+  alist(
+    L_std ~ dstudent(2, mu, sigma),
+    mu <- a + bG_m*G_m_std + bA*A_std,
+    a ~ dnorm(0, 0.5),
+    bG_m ~ dlnorm(0, 0.5),
+    bA ~ dlnorm(0, 0.5),
+    sigma ~ dexp(1)
+  ),
+data = d)
+```
+
+```{r}
+compare(m0, m.a1, m.a2, func = PSIS)
+```
+
+```{r}
+compare(m0, m.a1, m.a2, func = WAIC)
+```
+
+Including avg growing season gives a model that is not significantly better than the 0-model. The model with log area is reliably worse than the other two.
+
+```{r}
+precis(m0)
+```
+
+```{r}
+precis(m.a1)
+```
+
+```{r}
+precis(m.a2)
+```
+
+The coefficients for G_m tell us that there is a positive association between L and G_m and that increases when we add area. Area also has a positive association, even though twice smaller than G_m.
+
+(b) 
+
+```{r}
+m.b1 <- quap(
+  alist(
+    L_std ~ dstudent(2, mu, sigma),
+    mu <- a - bG_s*G_s_std,
+    a ~ dnorm(0, 0.5),
+    bG_s ~ dlnorm(0, 0.5),
+    sigma ~ dexp(1)
+  ),
+data = d)
+```
+
+Our hypothesis is that the association is negative so we put the $\beta_{Gs}$ parameter as Log-Normal but subtracted from the mean instead of added. That way the trends the model would look for would be negative.
+
+```{r}
+prior <- extract.prior(m.b1)
+
+mu <- link( m.b1 , data=data.frame(G_s_std=c(-2:2)), post=prior)
+
+plot(NULL, xlim=c(-2, 2), ylim=c(-2, 2),
+     xlab="G_s_std", ylab="L_std")
+mtext("Prior predictive distribution with log-normal G_s_std")
+for ( i in 1:50 ) lines( -2:2 , mu[i,] , col=col.alpha("black",0.3) )
+```
+
+```{r}
+m.b1a <- quap(
+  alist(
+    L_std ~ dstudent(2, mu, sigma),
+    mu <- a - bG_s*G_s_std + bA * A_std,
+    a ~ dnorm(0, 0.5),
+    bG_s ~ dlnorm(0, 0.5),
+    bA ~ dlnorm(0, 0.5),
+    sigma ~ dexp(1)
+  ),
+data = d)
+```
+
+```{r}
+compare(m0, m.a1, m.a2, m.b1, m.b1a, func = PSIS)
+```
+
+```{r}
+compare(m0, m.a1, m.a2, m.b1, m.b1a, func = WAIC)
+```
+
+```{r}
+precis(m.b1)
+```
+
+```{r}
+precis(m.b1a)
+```
+
+Similar picture to what we saw with G_m. *Note that the positive bG_s is actually a negative association because its term is subtracted in the model.*
+
+So far we see G_m being positively associated with L, G_s negatively, and A although positively associated with both, leads to overfitting.
+
+(c) 
+
+```{r}
+m.c_negative <- quap(
+  alist(
+    L_std ~ dstudent(2, mu, sigma),
+    mu <- a + bG_m*G_m_std - bG_s*G_s_std - bG_sm * G_m_std * G_s_std,
+    a ~ dnorm(0, 0.5),
+    bG_s ~ dlnorm(0, 0.5),
+    bG_m ~ dlnorm(0, 0.5),
+    bG_sm ~ dlnorm(0, 0.5),
+    sigma ~ dexp(1)
+  ),
+data = d)
+
+m.c <- quap(
+  alist(
+    L_std ~ dstudent(2, mu, sigma),
+    mu <- a + bG_m*G_m_std + bG_s*G_s_std + bG_sm * G_m_std * G_s_std,
+    a ~ dnorm(0, 0.5),
+    bG_s ~ dnorm(0, 0.5),
+    bG_m ~ dnorm(0, 0.5),
+    bG_sm ~ dnorm(0, 0.5),
+    sigma ~ dexp(1)
+  ),
+data = d)
+```
+
+```{r}
+compare(m0, m.a1, m.a2, m.b1, m.b1a, m.c, m.c_negative, func = PSIS)
+```
+
+```{r}
+plot(m.c_negative)
+```
+
+So looking at the C-models our hypothesis is true.
+
+# 8H5
+
+```{r}
+data("Wines2012")
+d <- Wines2012
+```
+
+```{r}
+d$S <- standardize(d$score)
+```
+
+```{r}
+d$J <- as.numeric(d$judge)
+d$W <- as.numeric(d$wine)
+```
+
+```{r}
+m1 <- quap(
+  alist(
+    S ~ dnorm(mu, sigma),
+    mu <- a[jid] + a[]
+    a[jid, wid] ~ dnorm(0, 1),
+    bJ[jid] ~ dnorm(0, 1),
+    bW[wid] ~ dnorm(0, 1),
+    bJW[jid, wid] ~ dnorm(0, 1),
+    sigma ~ dexp(1)
+  ),
+data = d)
+```

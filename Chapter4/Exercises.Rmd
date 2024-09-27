@@ -1,0 +1,35 @@
+```{r}
+library(rethinking)
+```
+
+# 4M1
+
+```{r}
+mu <- rnorm(1e4, 0, 10)
+sigma <- rexp(1e4, 1)
+
+prior_y <- rnorm(1e4, mu, sigma)
+```
+
+```{r}
+dens(prior_y)
+```
+
+# 4M2
+
+```{r}
+f.4M2 <- alist(
+    y ~ dnorm(mu, sigma),
+    mu ~ dnorm(0, 10),
+    sigma ~ dexp(1)
+  )
+```
+
+# 4M3
+
+```{r}
+
+dens(rnorm(1e4, 0, 3))
+
+```
+

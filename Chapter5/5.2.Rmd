@@ -1,0 +1,227 @@
+# 5.2 Masked relationship
+
+The previous example showed using multiple regression to knock out spurious association.
+
+A second reason to use more than one predictor is to measure the direct influence of multiple factors on an outcome when none of those influences is apparent from bivariate relationships. This tends to arise when there are two predictors that are correlated with one another. However, one of these is positively correlated and the other negatively with the outcome.
+
+```{r}
+library(rethinking)
+data(milk)
+d <- milk
+d
+```
+
+For now we consider
+
+-   **kcal.per.g** (kcals per gram of milk)
+
+-   **mass** (avg female body mass, in kilos)
+
+-   **neocortex.perc** (percent of total brain mass that is neocortex mass)
+
+A popular hypothesis is that primates with larger brains produce more energetic milk, so that brains can grow quicker.
+
+```{r}
+d$K <- standardize(d$kcal.per.g)
+d$N <- standardize(d$neocortex.perc)
+d$M <- standardize(log(d$mass))
+```
+
+$K_i \sim Normal(\mu_i, \sigma) \\
+\mu_i = \alpha + \beta_N N_i$
+
+```{r}
+m5.5_draft <- quap(
+  alist(
+    K ~ dnorm(mu, sigma),
+    mu <- a + bN*N,
+    a ~ dnorm(0, 1),
+    bN ~ dnorm(0, 1),
+    sigma ~ dexp(1)
+  ), data = d)
+```
+
+Get only samples where there are no NAs for the variables
+
+```{r}
+dcc <- d[complete.cases(d$K, d$N, d$M), ]
+```
+
+```{r}
+m5.5_draft <- quap(
+  alist(
+    K ~ dnorm(mu, sigma),
+    mu <- a + bN*N,
+    a ~ dnorm(0, 1),
+    bN ~ dnorm(0, 1),
+    sigma ~ dexp(1)
+  ), data = dcc)
+```
+
+```{r}
+prior <- extract.prior(m5.5_draft)
+xseq <- c(-2, 2)
+mu <- link(m5.5_draft, data=list(N=xseq), post=prior)
+```
+
+```{r}
+plot(NULL, xlim=xseq, ylim=xseq, xlab="neocortex % (std)", ylab="kcal/g (std)")
+mtext(print("a ~ dnorm(0, 1) \n bN ~ dnorm(0, 1)"))
+for(i in 1:50) lines(xseq, mu[i,], col=col.alpha("black", 0.3),)
+```
+
+These lines are crazy. Our priors are too vague, uninformative.
+
+```{r}
+m5.5 <- quap(
+  alist(
+    K ~ dnorm(mu, sigma),
+    mu <- a + bN*N,
+    a ~ dnorm(0, 0.2),
+    bN ~ dnorm(0, 0.5),
+    sigma ~ dexp(1)
+  ), data = dcc)
+
+prior <- extract.prior(m5.5)
+xseq <- c(-2, 2)
+mu <- link(m5.5, data=list(N=xseq), post=prior)
+
+plot(NULL, xlim=xseq, ylim=xseq, xlab="neocortex % (std)", ylab="kcal/g (std)")
+mtext(print("a ~ dnorm(0, 0.2) \n bN ~ dnorm(0, 0.5)"))
+for(i in 1:50) lines(xseq, mu[i,], col=col.alpha("black", 0.3))
+```
+
+Much better.
+
+Now let's look at the posterior.
+
+```{r}
+precis(m5.5)
+```
+
+We can see that the association is very weak - 0.13 with std 0.22 meaning that it also overlaps 0.
+
+```{r}
+xseq <- seq( from=min(dcc$N)-0.15 , to=max(dcc$N)+0.15 , length.out=30 )
+mu <- link( m5.5 , data=list(N=xseq) )
+mu_mean <- apply(mu,2,mean)
+mu_PI <- apply(mu,2,PI)
+plot( K ~ N , data=dcc )
+lines( xseq , mu_mean , lwd=2 )
+shade( mu_PI , xseq )
+```
+
+The posterior mean line is weakly positive but highly imprecise. A lot of mildly positive or mildly negative slopes are plausible, given this model and data.
+
+Using log(mass) instead of mass is common for variables that are scaling measurements like mass. This translates the measure in the magnitude. By using the log here we're assuming that the magnitude of mass is related to kcal in a linear fashion.
+
+Now we construct the same bivariate model for kcal \~ mass
+
+```{r}
+m5.6 <- quap(
+  alist(
+    K ~ dnorm(mu, sigma),
+    mu <- a + bM*M,
+    a ~ dnorm(0, 0.2),
+    bM ~ dnorm(0, 0.5),
+    sigma ~ dexp(1)
+  ), data = dcc)
+```
+
+```{r}
+precis(m5.6)
+```
+
+```{r}
+xseq <- seq( from=min(dcc$M)-0.15 , to=max(dcc$M)+0.15 , length.out=30 )
+mu <- link( m5.6 , data=list(M=xseq) )
+mu_mean <- apply(mu,2,mean)
+mu_PI <- apply(mu,2,PI)
+plot( K ~ M , data=dcc )
+lines( xseq , mu_mean , lwd=2 )
+shade( mu_PI , xseq )
+```
+
+Still a pretty weak relationship although it's more plausible to have a negative slope.
+
+Now let's construct the multivariate model considering both N and M.
+
+```{r}
+m5.7 <- quap(
+  alist(
+    K ~ dnorm(mu, sigma),
+    mu <- a + bM*M + bN*N,
+    a ~ dnorm(0, 0.2),
+    bM ~ dnorm(0, 0.5),
+    bN ~ dnorm(0, 0.5),
+    sigma ~ dexp(1)
+  ), data = dcc)
+```
+
+```{r}
+precis(m5.7)
+```
+
+The association with M and N when both are included in the model is much higher.
+
+```{r}
+plot(coeftab(m5.5, m5.6, m5.7), pars=c("bM", "bN"))
+```
+
+They have both moved away from 0.
+
+```{r}
+library(GGally)
+library(ggplot2)
+ggpairs(dcc[, c("K", "M", "N")])
+```
+
+We can see that M and N are negatively and positively correlated with K respectively. And M and N have strong positive correlation.
+
+**Food for thought:** The result of this pattern is that they tend to cancel each other out. Think about it. M and N affect K in opposite directions. On top of that when M is high N is also high because of the positive correlation between the two. So the positive influence of N on K tend to be cancelled by negative influence of negative influence of M on K.
+
+There are three possible causal models (DAGs) that would explain what we're seeing in the data.
+
+-   M influences N and both M and N affect K
+
+-   N influences M and both M and N affect K
+
+-   An unobserved variable U influences both M and N and both M and N affect K
+
+*(Visualizations of the three DAGs on page 151)*
+
+We can't tell which DAG is the correct one because they imply the same **conditional independencies**. There are no testable implications to distinguish them.
+
+Each DAG implies that all three variables are associated, regardless of what we condition on.
+
+A set of DAGs with the same conditional independencies is called a **Markov equivalence set**.
+
+Now we make the *counterfactual* plots again.
+
+Suppose the third model is correct (*An unobserved variable U influences both M and N and both M and N affect K*)
+
+Manipulating M or N breaks the influence of U on each.
+
+```{r}
+xseq <- seq( from=min(dcc$M)-0.15 , to=max(dcc$M)+0.15 , length.out=30 )
+mu <- link( m5.7 , data=data.frame( M=xseq , N=0 ) )
+mu_mean <- apply(mu,2,mean)
+mu_PI <- apply(mu,2,PI)
+plot( NULL , xlim=range(dcc$M) , ylim=range(dcc$K),
+      xlab="neocortex % (std)", ylab="log body mass (std)")
+mtext("Counterfactual holding M = 0")
+lines( xseq , mu_mean , lwd=2 )
+shade( mu_PI , xseq )
+```
+
+```{r}
+xseq <- seq( from=min(dcc$N)-0.15 , to=max(dcc$N)+0.15 , length.out=30 )
+mu <- link( m5.7 , data=data.frame( N=xseq , M=0 ) )
+mu_mean <- apply(mu,2,mean)
+mu_PI <- apply(mu,2,PI)
+plot( NULL , xlim=range(dcc$N) , ylim=range(dcc$K),
+      xlab="neocortex % (std)", ylab="kcal/g (std)")
+mtext("Counterfactual holding M = 0")
+lines( xseq , mu_mean , lwd=2 )
+shade( mu_PI , xseq )
+```

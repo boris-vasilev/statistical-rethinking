@@ -1,0 +1,219 @@
+# 4.5 Curves from lines
+
+```{r}
+library(rethinking)
+data("Howell1")
+d <- Howell1
+```
+
+The relationship in the whole population is not linear but curved.
+
+```{r}
+plot(height ~ weight, data=d)
+```
+
+## 4.5.1 Polynomial regression
+
+Parabolic model of the mean
+
+$\mu_i = \alpha + \beta_1x_i + \beta_2x_i^2$
+
+$\beta_2$ measures the curvature of the relationship between weight and height.
+
+We begin by **standardizing the predictor variable** - weight. - **Z-transform.** When predictor variables have very large values there are sometimes numerical glitches. **Especially important with polynomial regression where we square and cube the variable making it even larger**.
+
+```{r}
+d$weight_s <- (d$weight - mean(d$weight)) / sd(d$weight)
+```
+
+**The model**
+
+$h_i \sim Normal(\mu_i, \sigma)$ [likelihood]
+
+$\mu_i = \alpha + \beta_1x_i + \beta_2x_i$ [**polynomial regression model**]
+
+$\alpha \sim Normal(178, 20)$ [$\alpha$ prior]
+
+$\beta_1 \sim \text{Log-Normal}(0, 1)$ [$\beta_1$ prior]
+
+$\beta_2 \sim Normal(0, 1)$ [$\beta_2$ **prior**]
+
+$\sigma \sim Uniform(0, 50)$ [$\sigma$ prior]
+
+We don't want to constraint the $\beta_2$ parameter to be positive like we did with $\beta_1$. Prior predictive simulation helps us understand why. In general, it is very difficult to understand the implication of the polynomial terms.
+
+```{r}
+d$weight_s2 <- d$weight_s^2
+m4.5 <- quap(
+    alist(
+        height ~ dnorm( mu , sigma ) ,
+        mu <- a + b1*weight_s + b2*weight_s2 ,
+        a ~ dnorm( 178 , 20 ) ,
+        b1 ~ dlnorm( 0 , 1 ) ,
+        b2 ~ dnorm( 0 , 1 ) ,
+        sigma ~ dunif( 0 , 50 )
+    ) , data=d )
+```
+
+```{r}
+precis(m4.5)
+```
+
+Unlike the linear model the $\alpha$ here doesn't equal the sample mean. Why is that? Even when $x_i=0$ the average value of the quadratic term $E[\beta_2x_i^2]$ will likely not be equal to 0. Unlike with the linear model where $E[\beta_1x_i]$ was equal to 0.
+
+**Linear model:**
+
+```{r}
+m4.5_linear <- quap(
+    alist(
+        height ~ dnorm( mu , sigma ) ,
+        mu <- a + b1*weight_s,
+        a ~ dnorm( 178 , 20 ) ,
+        b1 ~ dlnorm( 0 , 1 ) ,
+        sigma ~ dunif( 0 , 50 )
+    ) , data=d )
+
+weight.seq <- seq( from=-2.2 , to=2 , length.out=30 )
+pred_dat <- list( weight_s=weight.seq )
+mu <- link( m4.5_linear , data=pred_dat )
+mu.mean <- apply( mu , 2 , mean )
+mu.PI <- apply( mu , 2 , PI , prob=0.89 )
+sim.height <- sim( m4.5_linear , data=pred_dat )
+height.PI <- apply( sim.height , 2 , PI , prob=0.89 )
+```
+
+```{r}
+plot( height ~ weight_s , d , col=col.alpha(rangi2,0.5) )
+lines( weight.seq , mu.mean )
+shade( mu.PI , weight.seq )
+shade( height.PI , weight.seq )
+```
+
+**Polynomial (quadratic) model**
+
+```{r}
+weight.seq <- seq( from=-2.2 , to=2 , length.out=30 )
+pred_dat <- list( weight_s=weight.seq , weight_s2=weight.seq^2 )
+mu <- link( m4.5 , data=pred_dat )
+mu.mean <- apply( mu , 2 , mean )
+mu.PI <- apply( mu , 2 , PI , prob=0.89 )
+sim.height <- sim( m4.5 , data=pred_dat )
+height.PI <- apply( sim.height , 2 , PI , prob=0.89 )
+```
+
+```{r}
+plot( height ~ weight_s , d , col=col.alpha(rangi2,0.5) )
+lines( weight.seq , mu.mean )
+shade( mu.PI , weight.seq )
+shade( height.PI , weight.seq )
+```
+
+**Polynomial (cubic) model**
+
+```{r}
+d$weight_s3 <- d$weight_s^3
+
+m4.5_cubic <- quap(
+    alist(
+        height ~ dnorm( mu , sigma ) ,
+        mu <- a + b1*weight_s + b2*weight_s2 + b3*weight_s3,
+        a ~ dnorm( 178 , 20 ) ,
+        b1 ~ dlnorm( 0 , 1 ) ,
+        b2 ~ dnorm( 0 , 1 ) ,
+        b3 ~ dnorm( 0 , 1 ) ,
+        sigma ~ dunif( 0 , 50 )
+    ) , data=d )
+
+weight.seq <- seq( from=-2.2 , to=2 , length.out=30 )
+pred_dat <- list( weight_s=weight.seq , weight_s2=weight.seq^2, weight_s3=weight.seq^3 )
+mu <- link( m4.5_cubic , data=pred_dat )
+mu.mean <- apply( mu , 2 , mean )
+mu.PI <- apply( mu , 2 , PI , prob=0.89 )
+sim.height <- sim( m4.5_cubic , data=pred_dat )
+height.PI <- apply( sim.height , 2 , PI , prob=0.89 )
+
+plot( height ~ weight_s , d , col=col.alpha(rangi2,0.5) )
+lines( weight.seq , mu.mean )
+shade( mu.PI , weight.seq )
+shade( height.PI , weight.seq )
+```
+
+A better fit to the sample is could be a better geocentric (small world) model not guaranteed to be a good model in the big world (could be overfitting).
+
+## 4.5.2 Splines
+
+The second way to introduce curvature is to construct something known as a **spline.**
+
+```{r}
+data("cherry_blossoms")
+d <- cherry_blossoms
+precis(d)
+```
+
+[*doy*]{.underline} *here is the first day of blossom ranging from 86 (late March) to 124 (early May). The [year]{.underline} ranges frp, 812 CE to 2015 CE.*
+
+```{r}
+plot(doy ~ year, data=d)
+```
+
+**B-splines -** basis-splines. Basis is a component that is not wiggly. B-splines divide the full range of the predictor variable, like year, into parts. They assign a parameter to each part. These parameters are gradually turned on/off in a way that makes their sum into a fancy, wiggly curve.
+
+Similar to polynomial regression, we generate new predictor variables and use them in the linear model for $\mu_i$. Unlike polynomial regression, B-splines do not directly transform the predictor by squaring or cubing it. Instead they invent a series of entirely new, synthetic predictor variables. Each exists only to gradually turn a specific parameter on/off within a specific range of the real predictor variable.
+
+Each of these synthetic variables is called a **basis function**. The linear model becomes
+
+$\mu_i = \alpha + w_1B_{i,1} + w_2B_{i,2} + w_3B_{i,3} + …$
+
+where $B_{i, n}$ is the $n$-th basis function's value on row $i$, and $w$ parameters are the weights for each. These synthetic variable do some really elegant descriptive (geocentric) work for us.
+
+How do we construct these basis functions B?
+
+Divide the horizontal axis into parts, using pivot points called **knots**.
+
+**Choose the knots**
+
+Knots can be chosen in different ways. One approach is using the Wood's knot choice algorithm from the *mgcv* R package. We choose them here manually
+
+```{r}
+d2 <- d[complete.cases(d$doy), ]  # complete cases on doy
+num_knots <- 15
+knot_list <- quantile(d2$year, probs=seq(0, 1, length.out=num_knots))
+```
+
+**Choose polynomial degree**
+
+For degree 1, two basis functions combine at each point. For degree 2, three basis functions combine at each point. For degree 3, four combine. etc.
+
+```{r}
+library(splines)
+B <- bs(d2$year,
+        knots=knot_list[-c(1, num_knots)],
+        degree=3, intercept = T) # change degree=3 to something else to change the degree. Observe how many of the basis functions are non-zero
+```
+
+```{r}
+plot( NULL , xlim=range(d2$year) , ylim=c(0,1) , xlab="year" , ylab="basis" )
+for ( i in 1:ncol(B) ) lines( d2$year , B[,i] )
+```
+
+Notice how the knots become closer and closer. We chose the knots based on evenly-spaced quantiles. This gives more knots where there are more observations. It's very obvious that there are more observations in 1800-2000 than in 800-1200 and if we compare the pattern above we can see how concentrated the basis functions become the closer we are to the year 2000.
+
+**Calculate parameter weights**
+
+Now we need to get the parameter weights for each basis function. We need to define the model and fit it. The model is just a linear regression. The synthetic basis functions do all the work.
+
+We also need an intercept. This would make it easier to define priors on the basis weights, because then we can just conceive of eacs as a deviation from the intercept.
+
+$D_i \sim Normal(\mu_i, \sigma)$ [Likelihood]
+
+$\mu_i = \alpha + \sum^K_{k=1}{w_kB_{k,i}}$ [linear model]
+
+$\alpha \sim Normal(100, 10)$ [$\alpha$ prior]
+
+$w_k \sim Normal(0, 10)$ [$w_k$ prior]
+
+$\sigma \sim Exponential(1)$ [$\sigma$ prior]
+
+```{r}
+B
+```

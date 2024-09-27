@@ -1,0 +1,243 @@
+# 8.3 Continuous interactions
+
+Interaction effects are difficult to interpret. They are nearly impossible to interpret using only standard deviations and means.
+
+Once interactions exist, multiple parameters are at play at the same time.
+
+In categorical-continuous interactions, the interpretation boils down to different slopes for different categories.
+
+It's harder for continuous interactions. The slope varies in a continuous fashion with a continuous variable.
+
+The mathematics of the model is the same, but the interpretation is much harder.
+
+## 8.3.1 A winter flower
+
+The data we're working with are sizes of blooms from beds of tulips grown in a greenhouse, under different soil and light conditions.
+
+```{r}
+library(rethinking)
+data("tulips")
+d <- tulips
+str(d)
+```
+
+The *blooms* column is our outcome. The *water* and *shade* columns are our predictor variables.
+
+*shade* and *water* are ordered variables (1 - low, 3 - high)
+
+It is clear that shade and water would have an independent effect on blooms. But we want to also model their interaction effect. If there is high shade and high water, the water's unlikely to affect blooming when there's no sunlight.
+
+In the absence of a more complex interaction model of light and water, using a simple linear two-way interaction is a good start.
+
+## 8.3.2 The models
+
+Two models
+
+1.  water and shade but no interaction
+2.  water and shade with interaction
+
+The causal model we're working with is W -\> B \<- S. As previously, that tells us that $B=f(W, S)$ but not how they influence B.
+
+W and S could have different mean B. But the convention is to do something much simpler.
+
+The first model has no interaction:
+
+$$
+B_i \sim Normal(\mu_i, \sigma)\\
+\mu_i = \alpha + \beta_W(W_i - \bar{W}) + \beta_S(S_i - \bar{S})
+$$
+
+It's just a linear regression with two predictors, each centered by subtracting the mean.
+
+```{r}
+d$blooms_std <- d$blooms / max(d$blooms)
+d$water_cent <- d$water - mean(d$water)
+d$shade_cent <- d$shade - mean(d$shade)
+```
+
+Now blooms_std ranges from 0 to 1 and both water_cent and shade_cent range between -1 and 1.
+
+We scale blooms by it's maximum observed value because:
+
+1.  The large values of the raw scale make optimization difficult
+2.  It would be easier to assign a reasonable prior.
+3.  We don't want to z-transform blooms because 0 has a meaningful interpretation as a boundary (no blooming)
+
+**No interaction model:**
+
+There are three parameters in this model besides $\sigma$. So we need three priors. Starting with a vague prior:
+
+$$
+\alpha \sim Normal(0.5, 1)\\
+\beta_W \sim Normal(0, 1) \\
+\beta_S \sim Normal(0, 1)
+$$
+
+The prior for $\alpha$ centered at 0.5 tells us that when both water and shade are at their mean, the observed blooms is half of the observed maximum (remember we re-scaled water and shade by subtracting the mean so when water_cent is 0 it actually means that water is equal to the observed mean, same for shade).
+
+This is less information than we have but a good starting point. We know that $\beta_W$ should be positive - more water, more blooms, and $\beta_S$ should be negative - more shade, less blooms.
+
+For the priors for $\beta_W$ and $\beta_S$:
+
+W ranges from -1 to 1 - a range of 2 units. So the slope should take us from the theoretical minimum of zero blooms when W=-1 to the observed maximum of B=1 - B has a range of 1 unit (0 to 1)
+
+Therefore to take us from min to max, the slope should be 0.5. So if we assign a standard deviation of 0.25 to $\beta_W$ and $\beta_S$, then 95% (two standard deviations) of the prior slopes are from -0.5 to 0.5. For $\beta_W$ we expect that to be in the positive range, and for shade we expect that to be in the negative range.
+
+$$
+\alpha \sim Normal(0.5, 0.25)\\
+\beta_W \sim Normal(0, 0.25) \\
+\beta_S \sim Normal(0, 0.25)
+$$
+
+```{r}
+m8.4 <- quap(
+    alist(
+        blooms_std ~ dnorm( mu , sigma ) ,
+        mu <- a + bw*water_cent + bs*shade_cent ,
+        a ~ dnorm( 0.5 , 0.25 ) ,
+        bw ~ dnorm( 0 , 0.25 ) ,
+        bs ~ dnorm( 0 , 0.25 ) ,
+        sigma ~ dexp( 1 )
+    ) , data=d )
+```
+
+**Interaction model:**
+
+To build an interaction model between water and shade, we need to construct $\mu$ so that the impact of changing either, depends on the value of the other variable.
+
+When we wanted to model the mean of the outcome, conditonal on the value of a continuous predictor $x$ we used the linear model: $\mu_i = \alpha + \beta x_i$
+
+Now in order to make the slope $\beta$ conditional on another variable we do the same thing - make a linear model for $\beta$
+
+In the blooms example. We define the slope $\beta_W$ with its own linear model $\gamma_W$ like so:
+
+$$
+\mu_i = \alpha + \beta_W(W_i - \bar{W}) + \beta_S(S_i - \bar{S})
+$$
+
+for brevity we replace $W_i$ and $S_i$ with their centered values so we omit the subtraction of the mean:
+
+$$
+\mu_i = \alpha + \beta_WW_i + \beta_SS_i
+$$
+
+Now we say that (replacing $\beta_W$ with $\gamma_{W, i}$ - the linear model for the slope
+
+$$
+\mu_i = \alpha + \gamma_{W,i}W_i + \beta_SS_i \\
+\gamma_{W,i} = \beta_W + \beta_{WS}S_i
+$$
+
+Now the parameter for water has a slope that is a linear model $\gamma_{W, i}$. This linear model $\gamma_{W, i}$ has an intercept $\beta_W$ which is the mean slope for W when the shade is at its mean, and a slope (the slope has a slope) $\beta_{WS}$ which depends on the shade $S_i$.
+
+We also want to allow the association with shade $\beta_S$ to depend upon water. **Luckily because of the symmetry of interactions, this happens automatically.**
+
+It is conventional to substitute $\gamma_{W, i}$ in the equation above so it becomes
+
+$$
+\mu_i = \alpha + \underbrace{(\beta_W + \beta_{WS}S_i)}_{\gamma_{W,i}}W_i + \beta_SS_i = \alpha + \beta_WW_i + \beta_SS_i+ \beta_{WS}W_iS_i
+$$
+
+The interaction model is:
+
+$$
+B_i \sim Normal(\mu_i, \sigma) \\
+\mu_i = \alpha + \beta_WW_i + \beta_SS_i+ \beta_{WS}W_iS_i
+$$
+
+```{r}
+m8.5 <- quap(
+    alist(
+        blooms_std ~ dnorm( mu , sigma ) ,
+        mu <- a + bw*water_cent + bs*shade_cent + bws*water_cent*shade_cent ,
+        a ~ dnorm( 0.5 , 0.25 ) ,
+        bw ~ dnorm( 0 , 0.25 ) ,
+        bs ~ dnorm( 0 , 0.25 ) ,
+        bws ~ dnorm( 0 , 0.25 ) ,
+        sigma ~ dexp( 1 )
+    ) , data=d )
+```
+
+```{r}
+precis(m8.5)
+```
+
+We can see that $\beta_{WS}$ is negative. But how do we interpret this? It's hard.
+
+We need to visualise it.
+
+## 8.3.3 Plotting posterior predictions
+
+Our model gives us posterior distributions of the parameters but those are really hard to interpret when interactions come into play.
+
+Plotting posterior predictions makes it easier to visualise on the scale of the outcome.
+
+But before there were no interactions so we could fix the all other variables to a constant while changing the predictor we want to inspect. As a result, the value to which those other variables were fixed to didn't matter that much. If there is no interaction, it doesn't matter what we set the other predictors to.
+
+However here when we have interactions, setting one predictor to a value affects the values we observe for the interaction parameters. For example, fixing $S_i$ to a value would affect $\beta_{WS}$ because it changes with $S_i$.
+
+```{r}
+par(mfrow=c(2,3)) # 3 plots in 2 row
+for ( s in -1:1 ) {
+    idx <- which( d$shade_cent==s )
+    plot( d$water_cent[idx] , d$blooms_std[idx] , xlim=c(-1,1) , ylim=c(0,1) ,
+        xlab="water" , ylab="blooms" , pch=16 , col=rangi2 )
+    mtext(paste("m8.4 post: shade = ", s))
+    mu <- link( m8.4 , data=data.frame( shade_cent=s , water_cent=-1:1 ) )
+    for ( i in 1:20 ) lines( -1:1 , mu[i,] , col=col.alpha("black",0.3) )
+}
+
+for ( s in -1:1 ) {
+    idx <- which( d$shade_cent==s )
+    plot( d$water_cent[idx] , d$blooms_std[idx] , xlim=c(-1,1) , ylim=c(0,1) ,
+        xlab="water" , ylab="blooms" , pch=16 , col=rangi2 )
+    mtext(paste("m8.5 post: shade = ", s))
+    mu <- link( m8.5 , data=data.frame( shade_cent=s , water_cent=-1:1 ) )
+    for ( i in 1:20 ) lines( -1:1 , mu[i,] , col=col.alpha("black",0.3) )
+}
+```
+
+Note that in the no interaction model (m8.4) the slope with water doesn't change across the different values for shade. The intercept is changed, but not the slope.
+
+In the interaction model (m8.5) we see that the slope with water is strongly positive when shade=-1 and it's slope reduces with shade = 0 to almost no slope at shade = 1. When there is no sunlight the water level doesn't matter much, the tulips are still not going to blossom.
+
+## 8.3.4 Plotting prior predictions
+
+Similarly we can plot the prior predictions by passing the prior (from *extract.prior*) to the *link* function with "post=prior"
+
+```{r}
+set.seed(7)
+prior.m8.4 <- extract.prior(m8.4)
+prior.m8.5 <- extract.prior(m8.5)
+
+par(mfrow=c(2,3)) # 3 plots in 2 row
+for ( s in -1:1 ) {
+    idx <- which( d$shade_cent==s )
+    plot( d$water_cent[idx] , d$blooms_std[idx] , xlim=c(-1,1) , ylim=c(-1,2) ,
+        xlab="water" , ylab="blooms" , pch=16 , col=rangi2 )
+    mtext(paste("m8.4 prior: shade = ", s))
+    
+    abline(h=min(d$blooms_std), lty=2)  # minimum blooms
+    abline(h=max(d$blooms_std), lty=2)  # maximum blooms
+    
+    mu <- link( m8.4 , data=data.frame( shade_cent=s , water_cent=-1:1 ), post=prior.m8.4 )
+    for ( i in 1:20 ) lines( -1:1 , mu[i,] , col=col.alpha("black",0.3) )
+}
+
+for ( s in -1:1 ) {
+    idx <- which( d$shade_cent==s )
+    plot( d$water_cent[idx] , d$blooms_std[idx] , xlim=c(-1,1) , ylim=c(-1,2) ,
+        xlab="water" , ylab="blooms" , pch=16 , col=rangi2 )
+    mtext(paste("m8.5 prior: shade = ", s))
+    
+    abline(h=min(d$blooms_std), lty=2)  # minimum blooms
+    abline(h=max(d$blooms_std), lty=2)  # maximum blooms
+    
+    mu <- link( m8.5 , data=data.frame( shade_cent=s , water_cent=-1:1 ), post=prior.m8.5 )
+    for ( i in 1:20 ) lines( -1:1 , mu[i,] , col=col.alpha("black",0.3) )
+}
+```
+
+We can see some lines that have a negative slope which would make no sense. So we should revise our priors.
+
+Those are among the most complicated models so far. To go further we'd need a more capable conditioning engine to fit our models to data. That's the focus of the next chapter.

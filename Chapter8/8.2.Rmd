@@ -1,0 +1,11 @@
+# 8.2 Symmetry of interactions
+
+Interactions can be interpreted in two symmetrical ways. In the example with ruggedness and GDP:
+
+-   How much does the association between ruggedness and log GDP depend upon whether the nation is in Africa?
+
+-   How much does the association of Africa with log GDP depend upon ruggedness?
+
+From the point of view of the model, those two are equivalent.
+
+**TODO: READ CHAPTER AGAIN. UNCLEAR.**

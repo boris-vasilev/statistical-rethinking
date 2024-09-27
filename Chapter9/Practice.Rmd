@@ -1,0 +1,233 @@
+# 9E1
+
+Only 3
+
+# 9E2
+
+It uses conjugate pairs of likelihood function and prior distribution to make efficient, informed, proposals. It is a variant of the Metropolis-Hastings algorithm that allows asymmetric transitions. The thing that makes it efficient also is its limitation. We need to use conjugate priors to be able to use Gibbs sampling and this limits our choices for modeling complex posterior distributions.
+
+# 9E3
+
+HMC can't handle discrete parameters. The reason is that it uses the gradient at the current position to calculate its momentum. This is not possible with a discrete function. Discrete functions are non-differentiable.
+
+# 9E4
+
+n_eff or ess_bulk are the effective samples, excluding the warmup phase samples and autocorrelated samples. Samples from a Markov chain tend to be sequentially correlated or autocorrelated. As autocorrelation rises, n_eff gets smaller.
+
+# 9E5
+
+One - 1
+
+# 9M1
+
+```{r}
+library(rethinking)
+data(rugged)
+d <- rugged
+d$log_gdp <- log(d$rgdppc_2000)
+dd <- d[ complete.cases(d$rgdppc_2000) , ]
+dd$log_gdp_std <- dd$log_gdp / mean(dd$log_gdp)
+dd$rugged_std <- dd$rugged / max(dd$rugged)
+dd$cid <- ifelse( dd$cont_africa==1 , 1 , 2 )
+
+dat_slim <- list(
+    log_gdp_std = dd$log_gdp_std,
+    rugged_std = dd$rugged_std,
+    cid = as.integer( dd$cid )
+)
+
+m9m1_exp <- ulam(
+  alist(
+    log_gdp_std ~ dnorm(mu, sigma),
+    mu <- a[cid] + b[cid]*( rugged_std - 0.215 ) ,
+      a[cid] ~ dnorm( 1 , 0.1 ) ,
+      b[cid] ~ dnorm( 0 , 0.3 ) ,
+      sigma ~ dexp( 1 )
+  ),
+data=dat_slim, chains = 3, cores = 3)
+
+m9m1_unif <- ulam(
+  alist(
+    log_gdp_std ~ dnorm(mu, sigma),
+    mu <- a[cid] + b[cid]*( rugged_std - 0.215 ) ,
+      a[cid] ~ dnorm( 1 , 0.1 ) ,
+      b[cid] ~ dnorm( 0 , 0.3 ) ,
+      sigma ~ dunif( 0, 1 )
+  ),
+data=dat_slim, chains = 3, cores = 3)
+```
+
+```{r}
+precis(m9m1_exp, depth = 2)
+```
+
+```{r}
+precis(m9m1_unif, depth = 2)
+```
+
+```{r}
+traceplot(m9m1_unif)
+```
+
+```{r}
+traceplot(m9m1_exp)
+```
+
+```{r}
+exp_prior <- extract.prior(m9m1_exp)$sigma
+unif_prior <- extract.prior(m9m1_unif)$sigma
+
+dens(exp_prior, xlab="sigma", col="red", ylim=c(0, 1.2))
+dens(unif_prior, xlab="sigma", col="blue", add=T)
+mtext("Prior distribution - sigma")
+```
+
+There is a difference between the two prior distributions. dexp(1) assigns probability density decreasing as the value increases (starting from 0). On the other hand dunif(0, 1) assigns equal probability in the 0 to 1 range. dexp(1) is more informative than a dunif(0, 1) prior.
+
+In this case as we can see from the precis() outputs from both, the estimates don't differ because the data is enough to mask the difference in the prior knowledge.
+
+```{r}
+exp_samples <- extract.samples(m9m1_exp)$sigma
+unif_samples <- extract.samples(m9m1_unif)$sigma
+
+dens(exp_samples, xlab="sigma", col="red")
+dens(unif_samples, xlab="sigma", col="blue", add=T)
+mtext("Posterior distribution - sigma")
+```
+
+# 9M2
+
+```{r}
+m9m2 <- ulam(
+  alist(
+    log_gdp_std ~ dnorm(mu, sigma),
+    mu <- a[cid] + b[cid]*( rugged_std - 0.215 ) ,
+      a[cid] ~ dnorm( 1 , 0.1 ) ,
+      b[cid] ~ dexp( 0.3 ) ,
+      sigma ~ dexp( 1 )
+  ),
+data=dat_slim, chains = 3, cores = 3)
+```
+
+```{r}
+m9m1_prior <- extract.prior(m9m1_exp)
+m9m2_prior <- extract.prior(m9m2)
+
+dens(m9m1_prior$b, col="red")
+dens(m9m2_prior$b, col="blue", add=T)
+mtext("Prior distribution - beta")
+```
+
+```{r}
+m9m1_samples <- extract.samples(m9m1_exp)
+m9m2_samples <- extract.samples(m9m2)
+
+dens(m9m1_samples$b[, 1], col="red")
+dens(m9m2_samples$b[, 1], col="blue", add=T)
+mtext("Posterior distribution - beta[1] - Africa")
+
+dens(m9m1_samples$b[, 2], col="red", ylim=c(0, 45))
+dens(m9m2_samples$b[, 2], col="blue", add=T)
+mtext("Posterior distribution - beta[2] - non-Africa")
+```
+
+Very different posterior distributions. The difference here comes that dexp(1) is strictly positive, whereas dnorm(0, 1) is symmetrical around 0.
+
+```{r}
+precis(m9m1_exp, depth=2)
+```
+
+```{r}
+precis(m9m2, depth=2)
+```
+
+We see that in the new model with dexp(0.3) b[2] is no longer negative.
+
+# 9M3
+
+```{r}
+m9m1 <- ulam(
+  alist(
+    log_gdp_std ~ dnorm(mu, sigma),
+    mu <- a[cid] + b[cid]*( rugged_std - 0.215 ) ,
+      a[cid] ~ dnorm( 1 , 0.1 ) ,
+      b[cid] ~ dnorm( 0 , 0.3 ) ,
+      sigma ~ dunif( 0, 1 )
+  ),
+data=dat_slim, chains = 3, cores = 3)
+```
+
+```{r}
+m9m3 <- ulam(
+  alist(
+    log_gdp_std ~ dnorm(mu, sigma),
+    mu <- a[cid] + b[cid]*( rugged_std - 0.215 ) ,
+      a[cid] ~ dnorm( 1 , 0.1 ) ,
+      b[cid] ~ dnorm( 0 , 0.3 ) ,
+      sigma ~ dunif( 0, 1 )
+  ),
+data=dat_slim, chains = 3, cores = 3, warmup = 100)
+```
+
+```{r}
+traceplot(m9m3)
+```
+
+```{r}
+traceplot(m9m1)
+```
+
+```{r}
+precis(m9m3, depth = 2)
+```
+
+```{r}
+m9m3 <- ulam(
+  alist(
+    log_gdp_std ~ dnorm(mu, sigma),
+    mu <- a[cid] + b[cid]*( rugged_std - 0.215 ) ,
+      a[cid] ~ dnorm( 1 , 0.1 ) ,
+      b[cid] ~ dnorm( 0 , 0.3 ) ,
+      sigma ~ dunif( 0, 1 )
+  ),
+data=dat_slim, chains = 3, cores = 3, warmup = 50)
+```
+
+```{r}
+precis(m9m3, depth=2)
+```
+
+```{r}
+traceplot(m9m3)
+```
+
+```{r}
+trankplot(m9m3)
+```
+
+50 warmup samples seem to be enough to have well-mixed chains.
+
+# 9H1
+
+```{r}
+mp <- ulam(
+  alist(
+    a ~ dnorm(0, 1),
+    b ~ dcauchy(0, 1)
+  ),
+data=list(y=1), chains=1)
+```
+
+```{r}
+traceplot(mp)
+```
+
+```{r}
+precis(mp)
+```
+
+As expected we see the trace plot of a to be roughly between -2 and 2 with a mean at 0.
+
+As opposed to that the Cauchy-distributed b parameter fluctuates between much more extreme values. The reason for that is that there is no expected values. If we sample infinitely from a Gaussian distribution the sample mean will converge to 0 (the expected value). If we sample infinitely from a Cauchy distribution we won't converge to a value (no expected value). The tails of the Cauchy distribution are so heavy that the mean does not converge.
+
+# 9H2

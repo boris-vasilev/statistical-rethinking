@@ -1,0 +1,167 @@
+# 7.2 Entropy and accuracy
+
+How do we navigate between overfitting and underfitting?
+
+Before we decide on using regularization, information criteria, or both, we need to **pick a** **criterion of model performance - the target.**
+
+1.  First, we need to establish a **measurement scale for distance from perfect accuracy**. Information theory provides a measurement scale for the distance between two probability distributions.
+2.  Second, we need to establish **deviance as an approximation of relative distance from perfect accuracy**.
+3.  Only deviance out-of-sample is of interest
+
+## 7.2.1 Firing the weatherperson
+
+We need to define the target.
+
+1.  *Cost-benefit analysis*. How much does it cost to be wrong?
+2.  *Accuracy in context.* Some prediction tasks are easier than others so we would expect them to score higher accuracy. On the contrary, harder tasks might have lower satisfactory accuracy.
+
+#### 7.2.1.1 Costs and benefits
+
+Depending on what we value the way we score the model might vary. The weatherperson example - if we value getting wet much more than carrying an umbrella unnecessarily, then our target is much different than if we're interested in weather or not we've predicted correctly every day. A better safe than sorry target will aim for a low false negative rate and then the way we compare models would be different.
+
+#### 7.2.1.2 Measuring accuracy
+
+Which definition of "accuracy" is maximized by knowing the true model generating the data? We can't do better than that.
+
+In the weatherperson example, Calculating the probability of a correct prediction for the whole sequence of days. The joint probability of the correct predictions for each day. This is the definition of accuracy that is maximized by the correct model.
+
+In statistics this is sometimes known as the **log scoring rule**. Because typecally we compute and report the log of the joint probability.
+
+**Calibration**
+
+A model is considered **calibrated** if, when it predicts a probability $p$, the actual outcome happens with that probability $p$ in the long run. For example, if a model predicts a 40% chance of rain, it should actually rain 40% of the time when that prediction is made. This can be a terrible model because if a model predicts 40% chance of rain every day it will be perfectly calibrated but also terribly inacurate.
+
+## 7.2.2 Information and uncertainty
+
+So we want to use the log probability of the data to score accuracy of competing models.
+
+How do we measure distance from a perfect prediction?
+
+A perfect prediction would report the true probabilities of rain each day.
+
+We measure the distance from that target.
+
+The distance measure should appreciate that some targets are harder to hit. E.g. if we do the rain prediction in the winter we'll have three different possible states - sun, rain, and snow - as opposed to just sun and rain. This is harder and the distance measure should account for that.
+
+**Information theory** tells us what a prediction should achieve. A good prediction should reduce our uncertainty. In the weather forecast example, after we know the forecast our uncertainty about the weather is reduced. On the day, our uncertainty is 0 because we know what happens.
+
+*Information: The reduction in uncertainty when we learn an outcome.*
+
+**Properties of an uncertainty measure:**
+
+-   **Continuous** - if not a small change in any of the probabilities can result in drastic changes in the measure.
+
+-   **Increases with the number of possible events** - if there are more event types (harder target) the measure should also increase to reflect the harder target.
+
+-   **Additive** - If we first measure rain/shine (2 possible events), and then hot/cold (2 different possible events) the uncertainty over the combinations of those 4 events should be the sum of the separate uncertainties
+
+There is one function that has those properties - **information entropy**
+
+If there are $n$ possible events each with a probability $p_i$ and we call the list of probabilities $p$ then the unique measure of uncertainty is:
+
+$$
+H(p) = -E \space log(p_i) = - \sum_{i=1}^n p_ilog(p_i)
+$$
+
+*The uncertainty in a probability distribution is the average log-probability of an event.*
+
+Suppose it rains with a probability $p_1=0.3$ and shines with probability $p_2=0.7$
+
+Then the information entropy $H(p_i)$ would be:
+
+$$
+H(p) = -(p_1log(p_1) + p_2log(p_2)) \approx 0.61
+$$
+
+```{r}
+p <- c(0.3, 0.7)
+-sum(p*log(p))
+```
+
+If there is a much smaller probability of rain - say in some desert area then:
+
+```{r}
+p <- c(0.01, 0.99)
+-sum(p*log(p))
+```
+
+The uncertainty is much smaller. It is sunny almost every day. We can be much more certain about it.
+
+One important application of information theory is **maximum entropy - maxent**. It's a family of techniques for finding probability distributions that are most consistent with states of knowledge. Given what we know, what is the *least surprising* distribution? The answer maximizes the information entropy using the prior knowledge as a constraint. Bayesian updating is entropy maximization.
+
+## 7.2.3 From entropy to accuracy
+
+$H$ gave us a measure of uncertainty - how hard a target is to hit.
+
+Can we know use entropy to say how far a model is from the target?
+
+**Divergence:** The additional uncertainty induced by using probabilities from one distribution to describe another distribution
+
+Also known as Kullback-Leibler divergence or **KL divergence**.
+
+If the true distribution is a list of probabilities $p$ and a model predicts a list of probabilities $q$. The KL divergence, the additional uncertainty we have introduced as a consequence of using the model is:
+
+$$
+D_{KL}(p, q) = \sum_ip_i(log(p_i) - log(q_i)) = \sum_i p_ilog \biggl(\frac{p_i}{q_i}\biggl)
+$$
+
+The divergence is *the average difference in log probability between the target (p) and model (q).*
+
+The divergence is just the difference between the two entropies - the entropy of the target distribution and the *cross entropy* arising from using $q$ to predict $p$.
+
+When we have a perfect model and $q = p$:
+
+$$
+D_{KL}(p, q) = D_{KL}(p, p) = \sum_ip_i(log(p_i) - log(p_i)) = 0
+$$
+
+## 7.2.4 Estimating divergence
+
+But what does that have to do with overfitting and underfitting.
+
+The things above about information theory and divergence establish both:
+
+1.  How to measure the distance of a model from our target. - the KL divergence
+2.  How to estimate the divergence
+
+The problem is that KL divergence assumes that we know $p$ - the true probability distribution. If we knew that we wouldn't be doing statistical inference in the first place.
+
+We are interested only in comparing the divergence of different candidates, say $q$ and $r$. In this case most of $p$ is subtracted out, because there is a $E \space log(p_i)$ term in the divergence of both $q$ and $r$. This term has no effect on the distance of $q$ and $r$ from one another. So while we don't know what $p$ is, we can compare the distance of $q$ and $r$ from the target and determine which one is closer to the target.
+
+We're comparing the divergence of the two models
+
+$$
+D_{KL}(p, q) = \sum_ip_i(log(p_i) - log(q_i)) \space and \space D_{KL}(p, r) = \sum_ip_i(log(r_i) - log(q_i))
+\\
+\text{Since $p_i$ is a common multiplier in both we can remove it}
+\\
+\sum_i(log(p_i) - log(q_i)) \space and \space  \sum_i(log(p_i) - log(r_i))
+\\
+\sum_i log(q_i)\space and \space  \sum_i log(r_i)
+$$
+
+We'll call this measure the model score:
+
+$$
+S(q) = \sum_{i}log(q_i)
+$$
+
+and we're comparing $S(q)$ and $S(r)$
+
+This is the sum of the log-probabilities of the outcomes of the two models.
+
+This kind of score is a log-probability score, and is the gold standard way to compare predictive accuracy of different models.
+
+**REMEMBER! To compute this score for a Bayesian model, we have to use the entire posterior distribution.**
+
+How can we use the entire posterior?
+
+We need to find the log of the average probability foe each observation $i$, where the average is taken over the posterior distribution.
+
+We use the *lppd* function from *rethinking* to compute this for a quap-estimated model. lppd - **log-pointwise-predictive-density.**
+
+We use lppd and we sum the values (the log-probability score for a specific observation) to get the total log-probability score. The larger the sum is, the better because it means larger average accuracy. It is common to see something called **deviance** which is $-2\times lppd$ so that smaller values are better.
+
+## 7.2.5 Scoring the right data
+
+The log-probability score has the same flaw as $R^2$. It always improves as the model gets more complex. Just like $R^2$ it is a score based on the retrodictive (training) accuracy, not predictive (testing) accuracy.

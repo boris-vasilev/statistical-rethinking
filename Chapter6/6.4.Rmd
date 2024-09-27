@@ -1,0 +1,102 @@
+# 6.4 Confronting confounding
+
+**Confounding** is any context in which the association between an outcome Y and a predictor X is not the same as it would be if we experimentally determined X.
+
+Suppose we're interested in the association between education E and wages W. In a population there are a lot of unsobserved variables U influencing both W and E.
+
+```{r}
+drawdag(dagitty("
+                dag{
+                U [unobserved]
+                E -> W
+                U -> E
+                U -> W
+                }
+                "))
+```
+
+U can be where a person lives, their parents, their friends, etc.
+
+If we regress W on E, its causal effect will be confounded by U because there are two paths connecting E and W:
+
+-   the direct path W-\>E
+
+-   the indirect (confounding) path E \<- W -\> U
+
+We ignore the direction.
+
+Only the first path is causal. Why? Because if only the second path existed and we changed E, it would not change W. DAG below:
+
+```{r}
+drawdag(dagitty("
+                dag{
+                U [unobserved]
+                U -> E
+                U -> W
+                }
+                "))
+```
+
+**How to isolate the causal path?**
+
+We can run an experiment. If we assign values of E (we control it) the graph changes to the one below.
+
+*U here doesn't affect E because we're the ones generating E. Therefore we're blocking the U-\>E path. And we've also blocked the E \<- U -\> W path (the non-causal path between E and W)*
+
+```{r}
+drawdag(dagitty("
+                dag{
+                U [unobserved]
+                E -> W
+                U -> W
+                }
+                "))
+```
+
+Now there's only one way for information to go between E and W and then measuring the association between E and W would give us a useful measure of the causal effect of E on W.
+
+**Manipulation removed the confounding because it blocks the other path between E and W.**
+
+There are statistical ways of achieving the same result without manipulating E.
+
+The most obvious is to add U, to *condition* on it. It also blocks the path E \<- U -\> W. Why?
+
+-   Once you learn U, also learning E doesn't give any additional information about W.
+
+If U is the region a person lives in. Regions with high education and better paying jobs result in higher wages. If we don't know the region, then learning the individual's education tells us something about W because E and W are correlated across regions. But after we know where a person lives, learning E tells us nothing more about W. This is why conditioning on U blocks the E \<- U -\> W path. It makes E an W independent conditionally on U
+
+## 6.4.1 Shutting the backdoor
+
+Blocking confounding paths between predictor X and outcome Y is known as **shutting the backdoor.**
+
+E \<- U -\> W is a backdoor path. U affecting E won't change W but it will cause a spurious association between E and W.
+
+**Knowing the DAG it is [ALWAYS]{.underline} possible to say which variable we [SHOULD]{.underline} control for to shut all backdoor paths. It is also possible to say which variables we [SHOULDN'T]{.underline} control for.**
+
+All we need to know are the **four elemental confounds.**
+
+1.  **The fork** X\<-Z-\>Y.\
+    Z is a common cause of both X and Y generating a correlation between them. If we condition on Z, learning X tells us nothing about Y. X and Y are independent conditional on Z
+2.  **The pipe** X-\>Z-\>Y\
+    Example is the post-treatment bias in plant growth. Treatment X influences fungus Z which influences growth Y. If we condition on Z now, we also block all paths from X to Y
+3.  **The collider** X-\>Z\<-Y.\
+    Unlike the others, there is **no association** between X and Y **unless** **you condition** on Z. Conditioning on Z opens that path. So we shouldn't include Z in the model.
+4.  **The descendent**: The descendent is a fourth variable influenced by Z: Z-\> D. D carries some information from Z so conditioning on it partially opens the X-\>Z\<-Y path. It partially confounds the causal inference of X on Y. It depends on the nature of the relationship between Z and D Z-\>D.
+
+The algorithm to follow to deal with confounds is:
+
+1.  List all paths between X (potential cause of interest) and Y (the outcome)
+2.  Classify each as open or closed: A path is open unless it contains a collider
+3.  Classify each by whether it is a backdoor: A backdoor path has an arrow entering X.
+4.  If there are any open backdoor paths decide on which ones to condition on to close it.
+
+```{r}
+dag_6.1 <- dagitty( "dag {
+    U [unobserved]
+    X -> Y
+    X <- U <- A -> C -> Y
+    U -> B <- C
+}")
+
+adjustmentSets( dag_6.1 , exposure="X" , outcome="Y" )
+```
