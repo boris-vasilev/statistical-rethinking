@@ -1,0 +1,167 @@
+# 8.2 Generalized Linear Models
+
+The Gaussian models from previous chapters work by assuming a Gaussian distribution for the outcomes, and then replacing the parameter for the mean of the Gaussian with a linear model resulting in
+
+$$
+y_i \sim Normal(\mu_i, sigma) \\
+\mu_i = \alpha + \beta x_i
+$$
+
+This is the maximum entropy distribution for a continuous outcome variable with no constraints on the range.
+
+When the outcome is discrete or bounded, the Gaussian likelihood is not the best choice because it doesn't abide by those new assumptions.
+
+For example, a count outcome variable (like RNA-seq) is strictly positive and discrete. A Gaussian model wouldn't be much good except for estimating the average count. It won't make good predictions because they would not be strictly positive and will be continuous.
+
+Luckily, we can do better. We can use the same approach to define a model that is not Gaussian. Set an outcome distribution and use a linear model in place of the parameter that describes the shape of the distribution.
+
+The result are models that look like this:
+
+$$
+y_i \sim Binomial(n, p_i)\\
+f(p_i) = \alpha + \beta(x_i - \bar{x})
+$$
+
+This is the essence of **Generalized Linear Models (GLMs)**.
+
+The likelihood in the model above is binomial. For a count outcome $y$ for which each observation arises from $n$ trials and with a constant expected value $np$, the binomial distribution has maximum entropy - it satisfies our constraints and is the least informative ("the flattest"). A different outcome variable with different constraints would have a different maximum entropy distribution.
+
+The other new thing is the function $f(p_i)$. This represents the **link function**, to be determined separately from the choice of distribution.
+
+Why do we need a link function?
+
+Whereas in a Gaussian model there is one parameter $\mu$ that describes the mean of the distribution, but others like the binomial don't have that. The binomial has two parameters but neither is the mean. Instead the mean outcome is the product of the two parameters $np$. Since $n$ is usually known, a linear model is attached to the unknown part - $p$. But $p$ is probability mass so it lies between 0 and 1. But there's nothing to stop the linear model $\alpha + \beta x_i$ from going below zero or exceeding one.
+
+The link function $f$ provides a solution to that problem.
+
+## 10.2.1 Meet the family
+
+The most common distributions in statistical modeling are the **exponential family**.
+
+Every member of the exponential family is a maximum entropy distribution, for some set of constraints.
+
+The Gaussian and binomial are the most commonly used outcome distributions in applied statistics, through the use of linear regression and logistic regression.
+
+There are three other distributions worth mentioning.
+
+The **exponential distribution** is constraint to be non-negative. It is fundamental for distance and duration measurements. If the probability of an event is constant, then the distribution of events tends towards exponential. It has maximum entropy among all non-negative continuous distributions with the same average displacement (distance or duration). It's shape is described by $\lambda$ - rate of events or $\lambda^{-1}$ - average displacement. It's the core of **survival analysis**.
+
+The **gamma distribution** is also non-negative and used for distance and duration. Unlike the exponential, it can have a peak above zero. If an event can happen only after two or more exponentially distributed events happen, the resulting waiting time is gamma distributed. For example, age of cancer onset is approximately gamma distributed since multiple events are necessary for onset. Gamma has maximum entropy among all distributions with the same mean and same average logarithm. It's shape is described by two parameters, but there are at least three different common descriptions of these parameters. It's common in survival analysis.
+
+The **Poisson distribution** is a count distribution like the binomial. It's a special case of the binomial. If the number of trials $n$ is very large (usually unknown) and the probability of success $p$ is very small, then the binomial converges to a Poisson distribution with an expected rate of events per unit time of $\lambda=np$. It is used for counts that never get close to any theoretical maximum. It has the same constraints like the binomial. Its shape is described by a single parameter $\lambda$ - rate of events.
+
+There are many more exponential family distributions and we shouldn't be constrained to only that family in our choice of outcome distribution. But we should check the performance of any other distribution, just like with any other modeling assumption.
+
+## 10.2.2 Linking linear models to distributions
+
+To build a GLM, all we need is to attach one or more linear models to one or more of the parameters that describe the distribution's shape. For that we need a **link function** to prevent things like negative distances or probability masses that exceed 1. so for any outcome distribution we'd have:
+
+$$
+y_i \sim Zaphod(\theta_i, \phi)\\
+f(\delta_i) = \alpha + \beta(x_i - \bar{x})
+$$
+
+The job of this function $f$ is to map the linear space of a model like $\alpha + \beta (x_i - \bar{x})$ to the non-linear space of a parameter like $\theta$.
+
+Most commonly used link functions are the **logit link** and **log link**.
+
+### Logit link
+
+The **logit link** [maps]{.underline} a parameter that is defined as a [probability mass]{.underline} (i.e. [constrained between 0 and 1]{.underline}), onto a linear model that can take any real value. This link is extremely common with binomial GLMs.
+
+$$
+y_i \sim Binomial(n, p_i)\\
+logit(p_i) = \alpha + \beta x_i
+$$
+
+And the logit function is defined as the log-odds:
+
+$$
+logit(p_i) = log\frac{p_i}{1-p_i}
+$$
+
+The *odds* of an event are the probability that event will happen divided by the probability that an event won't happen $\big(\frac{p_i}{1-p_i}\big)$.
+
+$$
+log\frac{p_i}{1 - p_i} = \alpha + \beta x_i
+$$
+
+Exponentiating both sides gives
+
+$$
+\frac{p_i}{1-p_i} = exp(\alpha + \beta x_i)
+$$
+
+Then
+
+$$
+p_i = exp(\alpha + \beta x_i) (1-p_i) \\
+p_i = exp(\alpha + \beta x_i) - p_i exp(\alpha + \beta x_i) \\
+p_i + p_i exp(\alpha + \beta x_i) = exp(\alpha + \beta x_i) \\
+p_i(1 + exp(\alpha + \beta x_i)) = exp(\alpha + \beta x_i) \\
+p_i = \frac{exp(\alpha + \beta x_i)}{1 + exp(\alpha + \beta x_i)}
+$$
+
+The last line
+
+$$
+p_i = \frac{exp(\alpha + \beta x_i)}{1 + exp(\alpha + \beta x_i)}
+$$
+
+is the **logistic function** (also called **inverse-logit**, because it inverts the logit function)
+
+***What this means is that when using the logit link for a parameter, we're defining the parameter's value to be a logistic transform of the linear model.***
+
+### Log link
+
+The second most common link function is the **log link.** It maps a [parameter that is defined over only positive real values]{.underline} onto a linear model.
+
+Suppose we want to model the standard deviation $\sigma$ of a Gaussian as a function of a predictor $x$. The parameter $\sigma$ by definition has to be positive, because a standard deviation cannot be negative or zero.
+
+$$
+y_i \sim Normal(\mu, \sigma_i)\\
+log(\sigma_i) = \alpha + \beta x_i
+$$
+
+What the log link effectively assumes is that the parameter's values is the exponentiation of the linear model.
+
+The inverse link is
+
+$$
+\sigma_i = exp(\alpha + \beta x_i)
+$$
+
+*Link functions apply our assumptions. Like all assumptions they can be useful in different contexts. But they can sometimes distort inference. To make sure that our conclusions are not sensitive to the choice of link function, do **sensitivity analysis**. Sensitivity analysis explores how changes in assumptions influence inference. If none of the alternative assumptions we consider have much impact on inference, that's worth reporting. If the alternatives do have an important impact on inference, that's also worth reporting. This is not the same as p-hacking. In p-hacking many anlayses are tried and the one that is statistically significant is reported. In sensitivity analysis, many analyses are tried and all of them are described.*
+
+[**BEWARE! GLMs force every predictor variable to interact with itself implicitly.**]{.underline} Let's see why.\
+In a classic Gaussian model for the mean:
+
+$$
+\mu  = \alpha + \beta x
+$$
+
+the rate of change of $\mu$ is
+
+$$
+\frac{\partial\mu}{\partial x} = \beta
+$$
+
+which is constant. It doesn't matter what the $x$ is the rate of change remains the same - $\beta$.
+
+But now consider the rate of change of the binomial probability $p$ w.r.t. a predictor $x$ (with a logit link).
+
+$$
+p = \frac{exp(\alpha + \beta x)}{1 + exp(\alpha + \beta x)}
+$$
+
+Now taking the derivative w.r.t. $x$
+
+$$
+\frac{\partial p}{\partial x} = \frac{\beta}{2(1+cosh(\alpha + \beta x))}
+$$
+
+Since $x$ appears in the derivative of $p$, the impact of a change in $x$ depends upon x. It interacts with itself.
+
+## 10.2.3 Omitted variable bias again
+
+##  
